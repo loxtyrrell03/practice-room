@@ -343,11 +343,13 @@ function renderBlockCard(wrap, b){
     const flag = FLAGS[b.flag] ? b.flag : null;
     const isBreak = String(b.id).startsWith("break");
     const isStudy = String(b.id).startsWith("score-study");
+    const movementContext = blockMovementContext(b);
     card.className = "card block" + (b.done ? " done" : "") + (flag ? " f-" + flag : "") +
       (isBreak ? " breakblk" : "") + (isStudy ? " studyblk" : "");
     card.innerHTML = `
       <button class="tick" aria-label="mark done">${b.done ? "✓" : ""}</button>
       <div class="b-body">
+        ${movementContext ? '<div class="movement-label"></div>' : ""}
         <div class="card-head"><h2></h2>
           <span class="head-right">${flag ? `<span class="ftag f-${flag}">${FLAGS[flag]}</span>` : ""}${isStudy ? '<span class="block-mode">off bench</span>' : ""}<span class="mins">${b.mins} min</span></span>
         </div>
@@ -358,6 +360,7 @@ function renderBlockCard(wrap, b){
         </div>
         ${isBreak ? "" : NOTEBAR_HTML}
       </div>`;
+    if (movementContext) card.querySelector(".movement-label").textContent = movementContext;
     card.querySelector("h2").textContent = b.title;
     card.querySelector(".detail").textContent = b.detail;
     card.querySelector(".tick").addEventListener("click", () => toggleBlock(b.id));
@@ -379,6 +382,12 @@ function renderBlockCard(wrap, b){
 
 const NOTEBAR_HTML = '<div class="notebar"><input type="text" placeholder="Log it: e.g. RH too loud b.57" maxlength="300"><button class="notebtn">log</button></div><div class="obslist"></div>';
 
+function blockMovementContext(b){
+  if (!b.movementId || !b.movement) return "";
+  const piece = (state().pieces || []).find(p => p.id === b.pieceId);
+  return `${piece ? piece.short : b.pieceId} · ${b.movement}`;
+}
+
 function todaysObs(blockId){
   const day = dayInfo().day;
   return (((docs[FILES.obs] || {}).obj || {}).obs || []).filter(o => o.blockId === blockId && o.day === day);
@@ -388,6 +397,7 @@ function wireNotebar(root, b){
   const bar = root.querySelector(".notebar");
   if (!bar) return;
   const input = bar.querySelector("input"), btn = bar.querySelector(".notebtn");
+  if (b.movement) input.placeholder = `Log ${b.movement}: e.g. RH too loud b.57`;
   const submit = async () => {
     const text = input.value.trim();
     if (!text) return;
@@ -435,6 +445,9 @@ async function logObservation(b, text, clientId){
         day:dayInfo().day,
         blockId:b.id,
         block:b.title,
+        pieceId:b.pieceId || null,
+        movementId:b.movementId || null,
+        movement:b.movement || null,
         text
       })
     });
@@ -494,11 +507,13 @@ function renderFocus(){
   if (!b) return closeFocus();
   const isBreak = String(b.id).startsWith("break");
   const isStudy = String(b.id).startsWith("score-study");
+  const movementContext = blockMovementContext(b);
   const undone = bs.filter(x => !x.done).length;
   const nxt = bs.slice(focusIdx + 1).find(x => !x.done);
   const ov = $("focusOverlay");
   ov.innerHTML = `<div class="focus-inner">
     <div class="f-kicker">Day ${Math.max(dayInfo().day,1)} · ${undone} block${undone===1?"":"s"} left · ${isStudy ? "off bench · " : ""}${b.mins} min</div>
+    ${movementContext ? '<div class="movement-label"></div>' : ""}
     <div class="f-title"></div>
     <div class="f-detail"></div>
     ${b.why ? '<div class="f-why"></div>' : ""}
@@ -511,6 +526,7 @@ function renderFocus(){
     </div>
     ${nxt ? `<div class="f-next">Up next: ${nxt.title} · ${nxt.mins} min</div>` : '<div class="f-next">Last one of the day.</div>'}
   </div>`;
+  if (movementContext) ov.querySelector(".movement-label").textContent = movementContext;
   ov.querySelector(".f-title").textContent = b.title;
   ov.querySelector(".f-detail").textContent = b.detail || "";
   if (b.why) ov.querySelector(".f-why").textContent = b.why;
@@ -673,7 +689,7 @@ function renderProgramme(){
       const row = document.createElement("div");
       row.className = "spot" + (sp.status === "watching" ? " watching" : "");
       row.innerHTML = `<span class="s-bars"></span><span class="s-issue"></span><span class="s-meta"></span>`;
-      row.querySelector(".s-bars").textContent = "b." + sp.bars;
+      row.querySelector(".s-bars").textContent = (sp.movement ? `${sp.movement} · ` : "") + "b." + sp.bars;
       row.querySelector(".s-issue").textContent = sp.issue;
       row.querySelector(".s-meta").textContent = (sp.status === "watching" ? "◆ watching · " : "✕ open · ") + sp.logged;
       spotBox.appendChild(row);

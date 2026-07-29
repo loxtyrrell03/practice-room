@@ -45,6 +45,8 @@ phase and repertoire changes rewrite all unfinished phases.
 
 **Today view** — countdown hero + focus line; morning cold-test card (per-piece
 ✓/✕ chips); practice blocks with per-block countdown **timers** (start/pause, chime, auto-done),
+with multi-movement works split into movement-specific cards whose stable
+movement IDs carry through to quick logs and trouble spots,
 attention flags (red *needs work* / amber *focus* / green *secure* — always
 color + word), "why this?" → coach, and scheduled **break blocks** (slim dashed
 cards, 8–12 min per ~50–60 min of playing; tedious work — fingerings, note

@@ -32,6 +32,10 @@ sent to the browser.
 
 ## Practice-log durability
 
+Multi-movement works use one daily block per movement. Each block carries stable
+piece and movement IDs, so its one-line logs and any bar-level trouble spots are
+movement-specific even when two movements use the same bar number.
+
 The one-line log on each practice block is accepted by a dedicated server
 endpoint and written to disk immediately with a stable ID. Each note visibly
 moves through `saved · pending`, `processing`, `processed`, or

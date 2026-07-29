@@ -23,7 +23,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 JOBS_VERSION = 1
 UK_TZ = ZoneInfo("Europe/London")
 DEFAULT_DAILY_TIME = "20:30"
@@ -241,6 +241,9 @@ class ObservationPipeline:
             ts = parse_iso(row.get("ts")) or self._now()
             local_date = ts.astimezone(UK_TZ).date().isoformat()
             defaults = {
+                "pieceId": None,
+                "movementId": None,
+                "movement": None,
                 "localDate": local_date,
                 "savedAt": row.get("ts") or iso_z(ts),
                 "attempts": 0,
@@ -303,6 +306,17 @@ class ObservationPipeline:
         text = _short_text(payload.get("text"), "text", 300)
         block_id = _short_text(payload.get("blockId"), "blockId", 120)
         block = _short_text(payload.get("block"), "block", 200)
+        piece_id = _short_text(
+            payload.get("pieceId"), "pieceId", 120, required=False
+        ) or None
+        movement_id = _short_text(
+            payload.get("movementId"), "movementId", 120, required=False
+        ) or None
+        movement = _short_text(
+            payload.get("movement"), "movement", 200, required=False
+        ) or None
+        if bool(movement_id) != bool(movement):
+            raise ValueError("movementId and movement must be supplied together")
         try:
             day = int(payload.get("day"))
         except (TypeError, ValueError) as exc:
@@ -326,6 +340,9 @@ class ObservationPipeline:
                 "day": day,
                 "blockId": block_id,
                 "block": block,
+                "pieceId": piece_id,
+                "movementId": movement_id,
+                "movement": movement,
                 "text": text,
                 "status": "pending",
                 "savedAt": iso_z(current),

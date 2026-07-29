@@ -83,6 +83,8 @@ main{width:100%;max-width:780px;margin:0 auto;padding:0 20px 48px;flex:1}
 .block.done .tick{background:var(--green);border-color:var(--green)}
 .block .b-body{flex:1;min-width:0}
 .block h2{margin-bottom:2px}
+.movement-label{color:var(--amber);font-size:.7rem;font-weight:750;letter-spacing:.09em;
+  line-height:1.3;text-transform:uppercase;margin-bottom:4px}
 .block .detail{color:var(--ink2);font-size:.97rem;margin-top:6px}
 .block .whybtn{margin-top:10px}
 

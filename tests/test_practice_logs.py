@@ -181,6 +181,45 @@ class PracticeLogTests(unittest.TestCase):
         self.assertEqual("pending", rows[0]["status"])
         self.assertEqual("2026-07-29", rows[0]["localDate"])
 
+    def test_submit_preserves_movement_identity(self):
+        pipeline = self.pipeline()
+        entry, created = pipeline.submit(
+            {
+                "clientId": "scriabin-presto-note",
+                "day": 1,
+                "blockId": "scriabin-presto-map",
+                "block": "Scriabin — II. Presto: map",
+                "pieceId": "scriabin",
+                "movementId": "2-presto",
+                "movement": "II. Presto",
+                "text": "RH weak b.87",
+            },
+            now=datetime(2026, 7, 29, 12, 0, tzinfo=timezone.utc),
+        )
+
+        self.assertTrue(created)
+        self.assertEqual("scriabin", entry["pieceId"])
+        self.assertEqual("2-presto", entry["movementId"])
+        self.assertEqual("II. Presto", entry["movement"])
+
+    def test_submit_rejects_partial_movement_identity(self):
+        pipeline = self.pipeline()
+        with self.assertRaisesRegex(
+            ValueError, "movementId and movement must be supplied together"
+        ):
+            pipeline.submit(
+                {
+                    "clientId": "partial-movement",
+                    "day": 1,
+                    "blockId": "scriabin-presto-map",
+                    "block": "Scriabin — II. Presto: map",
+                    "pieceId": "scriabin",
+                    "movementId": "2-presto",
+                    "text": "RH weak b.87",
+                },
+                now=datetime(2026, 7, 29, 12, 0, tzinfo=timezone.utc),
+            )
+
     def test_daily_batches_all_eligible_logs_without_chat_or_debrief(self):
         pipeline = self.pipeline()
         runner = FakeCoach()
