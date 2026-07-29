@@ -197,7 +197,7 @@ function renderAll(){ renderTop(); renderToday(); renderProgramme(); renderCoach
 
 function renderTop(){
   const {day, left} = dayInfo();
-  $("topCount").textContent = left > 0 ? `Day ${day} · ${left} day${left===1?"":"s"} to curtain`
+  $("topCount").textContent = left > 0 ? `Day ${Math.max(day,1)} · ${left} day${left===1?"":"s"} to curtain`
                           : left === 0 ? "Recital day" : "Post-recital";
 }
 
@@ -437,6 +437,7 @@ function thinkingBubble(){
 }
 
 function scrollThread(){
+  if (currentView !== "coach") return;
   requestAnimationFrame(() => { const t = $("thread"); t.scrollTop = t.scrollHeight; window.scrollTo(0, document.body.scrollHeight); });
 }
 
