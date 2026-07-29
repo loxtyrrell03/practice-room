@@ -75,6 +75,10 @@ main{width:100%;max-width:780px;margin:0 auto;padding:0 20px 48px;flex:1}
 .block .detail{color:var(--ink2);font-size:.97rem;margin-top:6px}
 .block .whybtn{margin-top:10px}
 
+.block.breakblk{padding:12px 24px;background:none;border-style:dashed}
+.block.breakblk h2{font-size:1rem;color:var(--mut)}
+.block.breakblk .detail{font-size:.85rem;color:var(--mut);margin-top:2px}
+
 /* attention flags — colour + word, never colour alone */
 .f-urgent{border-left:4px solid var(--red)}
 .f-focus{border-left:4px solid var(--amber)}

@@ -286,7 +286,8 @@ function renderToday(){
   (s.today.blocks || []).forEach(b => {
     const card = document.createElement("div");
     const flag = FLAGS[b.flag] ? b.flag : null;
-    card.className = "card block" + (b.done ? " done" : "") + (flag ? " f-" + flag : "");
+    const isBreak = String(b.id).startsWith("break");
+    card.className = "card block" + (b.done ? " done" : "") + (flag ? " f-" + flag : "") + (isBreak ? " breakblk" : "");
     card.innerHTML = `
       <button class="tick" aria-label="mark done">${b.done ? "✓" : ""}</button>
       <div class="b-body">
@@ -296,7 +297,7 @@ function renderToday(){
         <p class="detail"></p>
         <div class="b-actions">
           <button class="timerbtn" data-block="${b.id}"></button>
-          <button class="whybtn">why this? →</button>
+          ${isBreak ? "" : '<button class="whybtn">why this? →</button>'}
         </div>
       </div>`;
     card.querySelector("h2").textContent = b.title;
