@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""Practice Room — local server. Zero auth: serves the site, reads/writes the
-data repo on disk, runs the coach via your logged-in Claude CLI, syncs to
-GitHub in the background, picks up messages sent from your phone, and pairs
-your phone via QR (/pair) so the hosted site works anywhere."""
-import json, os, shutil, subprocess, threading, time, webbrowser
+"""Practice Room — private server for the laptop and phone.
+
+The browser never receives a GitHub credential. Tailscale Serve provides the
+phone's stable private HTTPS route; this process reads and writes the data repo
+on disk, runs the coach, and syncs GitHub only as a backup.
+"""
+import json, os, shutil, subprocess, sys, threading, time, webbrowser
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
@@ -13,7 +15,7 @@ DATA = HERE / "data-repo"
 PORT = 8977
 MODEL = os.environ.get("COACH_MODEL", "claude-opus-5")
 os.environ.setdefault("MAX_THINKING_TOKENS", "10000")  # medium reasoning
-HOSTED = "https://loxtyrrell03.github.io/practice-room/"
+PHONE_URL = "https://lox.tail89d19b.ts.net:10000/"
 
 coach_lock = threading.Lock()
 coach_running = False
@@ -130,27 +132,6 @@ def _append_coach_error(text):
     except Exception:
         pass
 
-PAIR_HTML = """<!DOCTYPE html><html><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Pair your phone</title>
-<style>body{{font-family:system-ui;background:#101613;color:#f4f1e8;display:flex;
-flex-direction:column;align-items:center;padding:40px 20px;gap:18px;text-align:center}}
-#qr{{background:#fff;padding:14px;border-radius:12px}}
-a{{color:#e2a94f;word-break:break-all;font-size:.85rem}}
-p{{max-width:34em;color:#c9c5b6}}
-button{{background:#e2a94f;border:none;border-radius:10px;padding:12px 22px;
-font-weight:700;cursor:pointer}}</style></head><body>
-<h1>Pair your phone</h1>
-<p>Scan with your phone camera. It opens the hosted Practice Room already signed
-in — nothing to type. The link contains your GitHub access, so don't share it.</p>
-<div id="qr"></div>
-<button onclick="navigator.clipboard.writeText(LINK).then(()=>this.textContent='Copied!')">Copy link instead</button>
-<a id="fallback" href="{link}">{link}</a>
-<script>const LINK={link_js};</script>
-<script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"
-onload="new QRCode(document.getElementById('qr'),{{text:LINK,width:240,height:240}});document.getElementById('fallback').style.display='none'"></script>
-</body></html>"""
-
 class Handler(SimpleHTTPRequestHandler):
     def __init__(self, *a, **kw):
         super().__init__(*a, directory=str(HERE), **kw)
@@ -182,25 +163,10 @@ class Handler(SimpleHTTPRequestHandler):
             except Exception as e:
                 return self._json(400, {"error": str(e)})
         if u.path == "/pair":
-            try:
-                r = subprocess.run(["gh", "auth", "token"], capture_output=True,
-                                   text=True, timeout=20, shell=(os.name == "nt"))
-                tok = r.stdout.strip()
-                if r.returncode != 0 or not tok:
-                    raise RuntimeError(r.stderr.strip() or "gh auth token failed")
-                ok, name = git(DATA, "config", "user.name")
-                first = name.split()[0] if ok and name else "you"
-                link = f"{HOSTED}#t={tok}&o=loxtyrrell03&r=practice-room-data&n={first}"
-                html = PAIR_HTML.format(link=link, link_js=json.dumps(link))
-                body = html.encode("utf-8")
-                self.send_response(200)
-                self.send_header("Content-Type", "text/html; charset=utf-8")
-                self.send_header("Cache-Control", "no-store")
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
-            except Exception as e:
-                self._json(500, {"error": f"pairing failed: {e}"})
+            self.send_response(302)
+            self.send_header("Location", "/")
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
             return
         return super().do_GET()
 
@@ -238,55 +204,13 @@ class Handler(SimpleHTTPRequestHandler):
 
         return self._json(404, {"error": "unknown endpoint"})
 
-def gh_token():
-    try:
-        r = subprocess.run(["gh", "auth", "token"], capture_output=True, text=True,
-                           timeout=20, shell=(os.name == "nt"))
-        return r.stdout.strip() or None
-    except Exception:
-        return None
-
 def background_loop():
-    """Instant phone pickup: conditional ETag poll of chat.json every 3 s
-    (304 responses are free against the API rate limit), plus quiet autosave."""
-    import urllib.request, urllib.error
-    token = gh_token()
-    etag = None
-    last_autosave = 0.0
-    url = "https://api.github.com/repos/loxtyrrell03/practice-room-data/contents/data/chat.json?ref=main"
+    """Push a quiet backup after local or phone writes."""
     while True:
-        time.sleep(3 if token else 60)
+        time.sleep(120)
         try:
-            changed = False
-            if token:
-                req = urllib.request.Request(url, headers={
-                    "Authorization": f"Bearer {token}",
-                    "Accept": "application/vnd.github+json",
-                    "User-Agent": "practice-room"})
-                if etag:
-                    req.add_header("If-None-Match", etag)
-                try:
-                    with urllib.request.urlopen(req, timeout=15) as resp:
-                        etag = resp.headers.get("ETag")
-                        changed = True
-                except urllib.error.HTTPError as e:
-                    if e.code == 304:
-                        changed = False
-                    elif e.code in (401, 403):
-                        token = gh_token()
-                    else:
-                        raise
-            else:
-                token = gh_token()
-                changed = True  # no token: fall back to a straight pull each minute
-            if changed:
-                git(DATA, "pull", "--rebase")
-                if chat_last_role() == "user" and not coach_running:
-                    log("message from the hosted site — starting the coach now.")
-                    threading.Thread(target=run_coach, daemon=True).start()
-            if time.time() - last_autosave > 120 and chat_last_role() != "user":
+            if chat_last_role() != "user":
                 sync_push("autosave")
-                last_autosave = time.time()
         except Exception:
             pass
 
@@ -297,9 +221,9 @@ def main():
     log("pulling latest…")
     git(HERE, "pull", "--rebase"); git(DATA, "pull", "--rebase")
     threading.Thread(target=background_loop, daemon=True).start()
-    log(f"Practice Room → http://localhost:{PORT}")
-    log(f"Pair your phone → http://localhost:{PORT}/pair")
-    if not os.environ.get("BROWSER_NONE"):
+    log(f"Practice Room -> http://localhost:{PORT}")
+    log(f"Phone (no login) -> {PHONE_URL}")
+    if not os.environ.get("BROWSER_NONE") and "--no-browser" not in sys.argv:
         try:
             webbrowser.open(f"http://localhost:{PORT}")
         except Exception:

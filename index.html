@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="app.css?v=8">
+<link rel="stylesheet" href="app.css?v=10">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎹</text></svg>">
 </head>
 <body>
@@ -28,37 +28,6 @@
 <div id="banner" class="banner" hidden></div>
 
 <main id="main">
-
-  <!-- SETUP -->
-  <section id="view-setup" class="view" hidden>
-    <div class="hero">
-      <h1>Practice Room</h1>
-      <p class="lede">Every day to the recital, planned. Your journal, your programme, and a coach that
-      knows the whole score.</p>
-    </div>
-    <div class="card">
-      <h2>Connect</h2>
-      <p>Everything lives in your <strong>private</strong> GitHub repo
-      (<code id="setupRepoName">practice-room-data</code>). Paste an access token once —
-      it stays in this browser only.</p>
-      <label class="field"><span>Your name</span>
-        <input id="setupName" type="text" placeholder="Lox" autocomplete="off">
-      </label>
-      <label class="field"><span>Access token</span>
-        <input id="setupToken" type="password" placeholder="github_pat_…" autocomplete="off">
-      </label>
-      <details class="adv">
-        <summary>Advanced</summary>
-        <label class="field"><span>Owner</span><input id="setupOwner" type="text" value="loxtyrrell03"></label>
-        <label class="field"><span>Data repo</span><input id="setupRepo" type="text" value="practice-room-data"></label>
-      </details>
-      <button class="btn primary" id="setupGo">Open the practice room</button>
-      <p class="hint">Getting the token: open any terminal and run <code>gh auth token</code> —
-      paste what it prints. (Prefer a scoped token? A fine-grained PAT with Contents
-      read/write on practice-room-data works too — see the repo README.)</p>
-      <p class="hint err" id="setupErr" hidden></p>
-    </div>
-  </section>
 
   <!-- TODAY -->
   <section id="view-today" class="view" hidden>
@@ -136,9 +105,9 @@
 
 <footer class="foot">
   <span id="footLeft">Practice Room</span>
-  <span><button class="linkbtn" id="refreshBtn">refresh</button> · <button class="linkbtn" id="resetBtn">disconnect</button></span>
+  <span><button class="linkbtn" id="refreshBtn">refresh</button></span>
 </footer>
 
-<script src="app.js?v=8"></script>
+<script src="app.js?v=10"></script>
 </body>
 </html>

@@ -30,7 +30,8 @@ nothing stale ever masquerades as current.
   get research-backed prescriptions with numbers (tempo % of PT, minutes, reps,
   bar numbers) — never a technique name without a how-to on the actual passage.
 - **Zero friction, zero auth, zero jargon.** Locally: double-click, it works.
-  Phone: scan a QR once. Blunt, plain, specific language everywhere.
+  Phone: open the permanent private Tailscale URL; no QR, token, pairing, or
+  site login. Blunt, plain, specific language everywhere.
 - **Trust through honesty.** Meters move on evidence (cold tests, filmed runs),
   not optimism. Dated facts only; stale ones are retired, not repeated.
 
@@ -99,10 +100,10 @@ banner. Cache-busted assets (`?v=N` — bump on every deploy).
 - **Run modes:** (1) **local** — `server.py` on :8977 (double-click the .bat;
   local install lives at `C:\Users\loxty\Desktop\Repos\practice-room` with the
   data repo cloned into `data-repo/`): files on disk, coach via local
-  `claude -p`, background GitHub sync; picks up hosted-site messages within
-  ~3–6 s via **ETag conditional polling** (304s are rate-limit-free).
-  (2) **hosted** — same app on Pages, GitHub API with a token delivered by the
-  `/pair` QR flow (machine-to-phone handoff; no typing). (3) **Actions** —
+  `claude -p`, background GitHub backup sync.
+  (2) **phone** — same local server through the permanent, tailnet-only
+  `https://lox.tail89d19b.ts.net:10000/` Tailscale Serve route; no browser
+  credential. GitHub Pages forwards old bookmarks there. (3) **Actions** —
   `coach.yml` answers when no local server does (needs `CLAUDE_CODE_OAUTH_TOKEN`
   secret; not yet configured).
 
@@ -118,6 +119,10 @@ banner. Cache-busted assets (`?v=N` — bump on every deploy).
   icon + word.
 - Keep the app dependency-free and build-free; bump the `?v=` asset query on
   every deploy.
+- Every completed change in this repo must be committed and pushed directly to
+  `origin/main` before the task is considered finished. `origin/main` is the
+  live GitHub Pages source. Do not leave verified work only in the local
+  worktree; if a push is genuinely blocked, report the blocker explicitly.
 - Don't break the zero-auth local path. It is the whole point.
 - Beware the escaping layers when patching files from a shell: heredoc + JSON
   transforms mangle `\uXXXX` sequences — patch via script files and match on

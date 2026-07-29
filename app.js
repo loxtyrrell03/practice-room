@@ -1,100 +1,54 @@
 /* Practice Room — app */
 "use strict";
 
-const LS_KEY = "practice-room-config";
+const PRIVATE_ORIGIN = "https://lox.tail89d19b.ts.net:10000";
 const FILES = { state:"data/state.json", chat:"data/chat.json", journal:"data/journal.json", memory:"memory/MEMORY.md", spots:"data/spots.json", obs:"data/observations.json" };
 const $ = (id) => document.getElementById(id);
-const LOCAL = ["localhost","127.0.0.1"].includes(location.hostname);
 
-let cfg = null;           // {name, token, owner, repo}
+let cfg = null;           // {name}
 let docs = {};            // path -> {obj|text, sha}
 let pollTimer = null;
 let currentView = "today";
 
-/* ── GitHub API ──────────────────────────────────────────── */
-function api(path){ return `https://api.github.com/repos/${cfg.owner}/${cfg.repo}/contents/${path}`; }
-function headers(){ return { "Authorization":`Bearer ${cfg.token}`, "Accept":"application/vnd.github+json", "X-GitHub-Api-Version":"2022-11-28" }; }
-
-function b64decode(b64){
-  const bin = atob(b64.replace(/\n/g,""));
-  const bytes = Uint8Array.from(bin, c => c.charCodeAt(0));
-  return new TextDecoder().decode(bytes);
-}
-function b64encode(str){
-  const bytes = new TextEncoder().encode(str);
-  let bin = "";
-  for (let i=0;i<bytes.length;i+=0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i,i+0x8000));
-  return btoa(bin);
-}
-
+/* ── Private backend ─────────────────────────────────────── */
 async function ghGet(path, {fresh=false} = {}){
-  if (LOCAL){
-    const r = await fetch(`/api/file?path=${encodeURIComponent(path)}&t=${Date.now()}`, {cache:"no-store"});
-    if (!r.ok) throw new Error(`Read failed (${r.status}) for ${path}`);
-    const text = (await r.json()).content;
-    return { obj: path.endsWith(".json") ? JSON.parse(text) : text, sha: null };
-  }
-  const url = api(path) + (fresh ? `?t=${Date.now()}` : "");
-  const r = await fetch(url, { headers: headers(), cache:"no-store" });
-  if (r.status === 404) throw new Error(`Missing file: ${path}`);
-  if (r.status === 401) throw new Error("Token rejected (401). Reconnect with a fresh token.");
-  if (!r.ok) throw new Error(`GitHub error ${r.status} on ${path}`);
-  const j = await r.json();
-  const text = b64decode(j.content);
-  const isJson = path.endsWith(".json");
-  return { obj: isJson ? JSON.parse(text) : text, sha: j.sha };
+  const suffix = fresh ? `&t=${Date.now()}` : "";
+  const r = await fetch(`/api/file?path=${encodeURIComponent(path)}${suffix}`, {cache:"no-store"});
+  if (!r.ok) throw new Error(`Read failed (${r.status}) for ${path}`);
+  const text = (await r.json()).content;
+  return { obj: path.endsWith(".json") ? JSON.parse(text) : text, sha: null };
 }
 
-/* mutate = fn(freshObj) -> newObj ; retries once on conflict */
+/* mutate = fn(freshObj) -> newObj */
 async function ghPut(path, mutate, message){
-  if (LOCAL){
-    const cur = await ghGet(path, {fresh:true});
-    const next = mutate(structuredClone(cur.obj));
-    const r = await fetch("/api/file", { method:"POST", headers:{"Content-Type":"application/json"},
-      body: JSON.stringify({ path, content: JSON.stringify(next, null, 2) + "\n" }) });
-    if (!r.ok) throw new Error(`Save failed (${r.status})`);
-    docs[path] = { obj: next, sha: null };
-    return next;
-  }
-  for (let attempt = 0; attempt < 3; attempt++){
-    const cur = await ghGet(path, {fresh:true});
-    const next = mutate(structuredClone(cur.obj));
-    const body = JSON.stringify({
-      message, sha: cur.sha,
-      content: b64encode(JSON.stringify(next, null, 2) + "\n"),
-    });
-    const r = await fetch(api(path), { method:"PUT", headers: headers(), body });
-    if (r.ok){ docs[path] = { obj: next, sha: (await r.json()).content.sha }; return next; }
-    if (r.status !== 409 && r.status !== 422) throw new Error(`Save failed (${r.status})`);
-    await new Promise(res => setTimeout(res, 800));
-  }
-  throw new Error("Save failed after retries — refresh and try again.");
+  const cur = await ghGet(path, {fresh:true});
+  const next = mutate(structuredClone(cur.obj));
+  const r = await fetch("/api/file", { method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({ path, content: JSON.stringify(next, null, 2) + "\n" }) });
+  if (!r.ok) throw new Error(`Save failed (${r.status})`);
+  docs[path] = { obj: next, sha: null };
+  return next;
 }
 
 /* ── boot ────────────────────────────────────────────────── */
 window.addEventListener("DOMContentLoaded", async () => {
   wireChrome();
-  if (LOCAL){
-    cfg = { name: "you", local: true };
-    try { const m = await (await fetch("/api/meta")).json(); if (m.name) cfg.name = m.name; } catch {}
-    $("resetBtn").hidden = true;
+  localStorage.removeItem("practice-room-config");
+  if (location.hash) history.replaceState(null, "", location.pathname + location.search);
+  try {
+    const r = await fetch(`/api/meta?t=${Date.now()}`, {cache:"no-store"});
+    const m = r.ok ? await r.json() : null;
+    if (!m || m.mode !== "local") throw new Error("private backend unavailable");
+    cfg = { name: m.name || "you" };
     return start();
+  } catch {
+    if (location.origin !== PRIVATE_ORIGIN) location.replace(PRIVATE_ORIGIN + "/");
   }
-  const h = new URLSearchParams(location.hash.slice(1));
-  if (h.get("t")){
-    cfg = { name: h.get("n") || "you", token: h.get("t"),
-            owner: h.get("o") || "loxtyrrell03", repo: h.get("r") || "practice-room-data" };
-    localStorage.setItem(LS_KEY, JSON.stringify(cfg));
-    history.replaceState(null, "", location.pathname + location.search);
-    return start();
-  }
-  try { cfg = JSON.parse(localStorage.getItem(LS_KEY)); } catch {}
-  if (cfg && cfg.token) start(); else showSetup();
 });
 
 /* live refresh: keep the page current when the coach updates files */
 setInterval(() => {
-  if (cfg && (cfg.token || cfg.local) && !pollTimer && document.visibilityState === "visible"
+  if (cfg && !pollTimer && document.visibilityState === "visible"
       && focusIdx === null && !document.activeElement.matches("input, textarea")){
     refreshQuiet();
   }
@@ -104,12 +58,6 @@ function wireChrome(){
   document.querySelectorAll(".tab").forEach(btn =>
     btn.addEventListener("click", () => switchView(btn.dataset.view)));
   $("refreshBtn").addEventListener("click", () => start());
-  $("resetBtn").addEventListener("click", () => {
-    if (confirm("Disconnect this browser? (Your data stays safe in the repo.)")){
-      localStorage.removeItem(LS_KEY); location.reload();
-    }
-  });
-  $("setupGo").addEventListener("click", connect);
   $("send").addEventListener("click", sendMessage);
   $("input").addEventListener("keydown", e => {
     if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) sendMessage();
@@ -126,33 +74,7 @@ function wireChrome(){
   $("weekPill").addEventListener("click", () => {
     const w = $("weekPanel"); w.hidden = !w.hidden;
   });
-  window.addEventListener("focus", () => { if (cfg && cfg.token && !pollTimer) refreshQuiet(); });
-}
-
-function showSetup(){
-  ["today","programme","coach","journal"].forEach(v => $("view-"+v).hidden = true);
-  $("tabs").hidden = true;
-  $("view-setup").hidden = false;
-}
-
-async function connect(){
-  const err = $("setupErr"); err.hidden = true;
-  cfg = {
-    name:  $("setupName").value.trim() || "pianist",
-    token: $("setupToken").value.trim(),
-    owner: $("setupOwner").value.trim(),
-    repo:  $("setupRepo").value.trim(),
-  };
-  if (!cfg.token){ err.textContent = "Paste a token first."; err.hidden = false; return; }
-  $("setupGo").disabled = true; $("setupGo").textContent = "Connecting…";
-  try {
-    await ghGet(FILES.state);
-    localStorage.setItem(LS_KEY, JSON.stringify(cfg));
-    await start();
-  } catch (e) {
-    err.textContent = e.message; err.hidden = false;
-    $("setupGo").disabled = false; $("setupGo").textContent = "Open the practice room";
-  }
+  window.addEventListener("focus", () => { if (cfg && !pollTimer) refreshQuiet(); });
 }
 
 async function loadAll(){
@@ -167,7 +89,7 @@ async function loadAll(){
 }
 
 function showApp(){
-  $("view-setup").hidden = true; $("tabs").hidden = false;
+  $("tabs").hidden = false;
   renderAll();
   switchView(currentView);
 }
@@ -179,8 +101,7 @@ async function start(){
     try { await loadAll(); return showApp(); }
     catch (e){ lastErr = e; await new Promise(r => setTimeout(r, 1200 * (i + 1))); }
   }
-  if (!cfg || !cfg.token) return showSetup();
-  // Configured browser: NEVER bounce to the connect screen. Use cached data.
+  // Never replace the working surface with setup UI. Use the last complete snapshot.
   let cached = null;
   try { cached = JSON.parse(localStorage.getItem("pr-cache")); } catch {}
   if (cached){
@@ -189,10 +110,10 @@ async function start(){
     docs[FILES.journal] = { obj: cached.j,  sha: null };
     docs[FILES.spots]   = { obj: cached.sp || {spots:[]}, sha: null };
     showApp();
-    banner(`Can't reach GitHub right now (${lastErr.message}) — showing your last-loaded data. Tap refresh to retry.`, true);
+    banner(`Can't reach the Practice Room server (${lastErr.message}) — showing your last-loaded data. Tap refresh to retry.`, true);
   } else {
     $("tabs").hidden = false;
-    banner(`${lastErr.message} — tap refresh to retry. Your connection is still saved; if the token truly expired, use disconnect (bottom right) and re-pair.`, true);
+    banner(`${lastErr.message} — the laptop server is not reachable. Tap refresh after it wakes.`, true);
   }
 }
 
@@ -211,7 +132,7 @@ async function refreshQuiet(){
 function switchView(v){
   currentView = v;
   document.querySelectorAll(".tab").forEach(b => b.classList.toggle("active", b.dataset.view === v));
-  ["setup","today","programme","coach","journal"].forEach(x => $("view-"+x).hidden = (x !== v));
+  ["today","programme","coach","journal"].forEach(x => $("view-"+x).hidden = (x !== v));
   if (v === "coach"){ $("coachDot").hidden = true; scrollThread(); }
 }
 
@@ -341,11 +262,14 @@ function renderBlockCard(wrap, b){
     const fl = card.querySelector(".focuslink");
     if (fl) fl.addEventListener("click", () => openFocus(b.id));
     wireNotebar(card, b);
-    card.querySelector(".whybtn").addEventListener("click", () => {
-      switchView("coach");
-      $("input").value = `Why am I doing “${b.title}” today — what is it for, and how do I know it's working?`;
-      $("input").focus();
-    });
+    const why = card.querySelector(".whybtn:not(.focuslink)");
+    if (why) {
+      why.addEventListener("click", () => {
+        switchView("coach");
+        $("input").value = `Why am I doing “${b.title}” today — what is it for, and how do I know it's working?`;
+        $("input").focus();
+      });
+    }
     wireTimerButton(card.querySelector(".timerbtn"), b);
     wrap.appendChild(card);
   }
@@ -672,17 +596,10 @@ async function sendMessage(){
   if (!text) return;
   $("send").disabled = true;
   try {
-    if (LOCAL){
-      const r = await fetch("/api/chat", { method:"POST", headers:{"Content-Type":"application/json"},
-        body: JSON.stringify({ text }) });
-      if (!r.ok) throw new Error("Couldn't reach the coach — is the server window still open?");
-      docs[FILES.chat].obj.messages.push({ role:"user", text, ts: new Date().toISOString() });
-    } else {
-      await ghPut(FILES.chat, c => {
-        c.messages.push({ role:"user", text, ts: new Date().toISOString() });
-        return c;
-      }, "message from " + (cfg.name || "pianist"));
-    }
+    const r = await fetch("/api/chat", { method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({ text }) });
+    if (!r.ok) throw new Error("Couldn't reach the coach — is the laptop awake?");
+    docs[FILES.chat].obj.messages.push({ role:"user", text, ts: new Date().toISOString() });
     box.value = "";
     renderCoach();
     startPolling();
@@ -710,9 +627,8 @@ function startPolling(){
     if (Date.now() - begun > 5*60*1000){
       stopPolling();
       const p = $("pendingMsg");
-      if (p) p.textContent = LOCAL
-        ? "No reply yet — check the Practice Room server window for errors (the Claude CLI may need a one-off `claude` login)."
-        : "No reply yet. If this is the first run, make sure the CLAUDE_CODE_OAUTH_TOKEN secret is set in the data repo (README has the steps) — then check the Actions tab for errors.";
+      if (p) p.textContent =
+        "No reply yet — check the Practice Room server on the laptop (the Claude CLI may need attention).";
     }
   }, 8000);
 }

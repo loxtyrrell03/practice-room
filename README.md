@@ -21,18 +21,16 @@ git clone https://github.com/loxtyrrell03/practice-room
 git clone https://github.com/loxtyrrell03/practice-room-data practice-room/data-repo
 ```
 
-## Phone / anywhere
+## Phone / anywhere — no login
 
-With the local server running, open **http://localhost:8977/pair** on the PC and
-scan the QR with your phone — it opens the hosted site
-(https://loxtyrrell03.github.io/practice-room/) already signed in. From then on
-the phone works anywhere with wifi: it reads/writes the private data repo
-directly, and messages you send start the coach on your PC within seconds
-whenever it's on.
+Open **https://lox.tail89d19b.ts.net:10000/** on the phone. Bookmark it or add it
+to the Home Screen. There is no Practice Room login, token, QR code, or pairing
+step: the phone reaches the laptop over the private Tailscale network already
+used by both devices. The GitHub credential never enters the browser.
 
-Want coach replies even with the PC off? One-time, on the PC:
-`claude setup-token`, then
-`gh secret set CLAUDE_CODE_OAUTH_TOKEN -R loxtyrrell03/practice-room-data` —
-GitHub Actions then answers whenever the local server isn't around to.
+The laptop server starts automatically when Lox signs in to Windows, and
+Tailscale Serve keeps the HTTPS address across restarts. The laptop must be
+awake and Tailscale must be connected on both devices. The public GitHub Pages
+address now forwards to the private address so old bookmarks do not show setup.
 
 This public repo contains only the app shell and server — no personal data.
