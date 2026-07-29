@@ -22,7 +22,19 @@ main{width:100%;max-width:780px;margin:0 auto;padding:0 20px 48px;flex:1}
 .side-head{padding:0 10px}
 .brand{font-family:var(--serif);font-weight:700;font-size:1.35rem;letter-spacing:.02em}
 .top-count{color:var(--mut);font-size:.78rem;line-height:1.45;margin-top:5px}
-.side-nav{display:flex;flex-direction:column;gap:3px;margin-top:42px}
+.practice-time{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));margin:18px 10px 0;
+  border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+.practice-metric{padding:10px 8px 8px 0}
+.practice-metric + .practice-metric{border-left:1px solid var(--line);padding-left:10px}
+.practice-metric span{display:block;color:var(--mut);font-size:.56rem;font-weight:700;
+  letter-spacing:.06em;text-transform:uppercase;white-space:nowrap}
+.practice-metric strong{display:block;color:var(--ink);font-family:var(--serif);
+  font-size:1.05rem;font-weight:600;line-height:1.25;font-variant-numeric:tabular-nums;
+  white-space:nowrap}
+.practice-remaining strong{color:var(--amber)}
+.practice-time small{grid-column:1/-1;color:var(--mut);font-size:.58rem;
+  padding:0 0 7px;letter-spacing:.02em}
+.side-nav{display:flex;flex-direction:column;gap:3px;margin-top:26px}
 .tab{width:100%;background:none;border:0;color:var(--ink2);
   font:600 .94rem var(--sans);padding:12px 12px;cursor:pointer;position:relative;
   display:grid;grid-template-columns:28px 1fr;gap:8px;align-items:center;text-align:left;
@@ -58,17 +70,6 @@ main{width:100%;max-width:780px;margin:0 auto;padding:0 20px 48px;flex:1}
 .lede{color:var(--ink2);font-size:1.05rem;margin-top:8px;max-width:34em}
 .daybig{font-family:var(--serif);font-size:3.4rem;font-weight:700;line-height:1.05}
 .curtain{color:var(--amber);font-weight:600;font-size:1.05rem;margin-top:2px}
-.practice-time{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));max-width:410px;
-  margin:18px 0 12px;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
-.practice-metric{padding:12px 18px 10px 0}
-.practice-metric + .practice-metric{border-left:1px solid var(--line);padding-left:18px}
-.practice-metric span{display:block;color:var(--mut);font-size:.72rem;font-weight:700;
-  letter-spacing:.08em;text-transform:uppercase}
-.practice-metric strong{display:block;color:var(--ink);font-family:var(--serif);
-  font-size:1.55rem;font-weight:600;line-height:1.25;font-variant-numeric:tabular-nums}
-.practice-remaining strong{color:var(--amber)}
-.practice-time small{grid-column:1/-1;color:var(--mut);font-size:.68rem;
-  padding:0 0 9px;letter-spacing:.02em}
 .dots{display:flex;gap:5px;flex-wrap:wrap;margin:16px 0 4px}
 .dots i{width:14px;height:14px;border-radius:4px;background:var(--track);display:block}
 .dots i.past{background:#3c4a40}
@@ -334,12 +335,20 @@ code{background:var(--card2);padding:2px 7px;border-radius:6px;font-size:.88em}
 }
 
 @media(max-width:700px){
-  body{padding-bottom:69px}
+  body{padding-bottom:107px}
   .app-content{margin-left:0}
-  .sidebar{inset:auto 0 0 0;width:100%;height:69px;padding:0;
+  .sidebar{inset:auto 0 0 0;width:100%;height:107px;padding:0;
     border-right:0;border-top:1px solid var(--line);background:rgba(13,19,16,.97)}
   .side-head,.side-actions{display:none}
-  .side-nav{margin:0;display:grid;grid-template-columns:repeat(5,1fr);height:100%;gap:0}
+  .practice-time{position:absolute;inset:0 0 auto;height:38px;margin:0;padding:0 17px;
+    display:flex;align-items:center;border-top:0;background:#0d1310}
+  .practice-metric{display:flex;align-items:baseline;gap:6px;flex:1;padding:0}
+  .practice-metric + .practice-metric{padding:0 0 0 14px}
+  .practice-metric span{font-size:.55rem}
+  .practice-metric strong{font:700 .78rem var(--sans)}
+  .practice-time small{display:none}
+  .side-nav{position:absolute;inset:auto 0 0;margin:0;display:grid;
+    grid-template-columns:repeat(5,1fr);height:69px;gap:0}
   .tab{height:100%;padding:9px 3px 7px;display:flex;justify-content:center;
     align-items:center;text-align:center;border-radius:0;font-size:.68rem;line-height:1.15}
   .tab::before{left:20%;right:20%;top:-1px;bottom:auto;width:auto;height:3px;
