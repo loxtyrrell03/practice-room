@@ -3,18 +3,18 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>The Green Room</title>
+<title>Practice Room</title>
 <meta name="description" content="28 days to the stage.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="app.css">
+<link rel="stylesheet" href="app.css?v=2">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎹</text></svg>">
 </head>
 <body>
 
 <header class="top">
-  <div class="brand" id="brand">The&nbsp;Green&nbsp;Room</div>
+  <div class="brand" id="brand">Practice&nbsp;Room</div>
   <div class="top-count" id="topCount"></div>
 </header>
 
@@ -32,14 +32,14 @@
   <!-- SETUP -->
   <section id="view-setup" class="view" hidden>
     <div class="hero">
-      <h1>The Green Room</h1>
-      <p class="lede">Twenty-eight days to the stage. Your plan, your journal, and a coach who
+      <h1>Practice Room</h1>
+      <p class="lede">Twenty-eight days to the recital. Your plan, your journal, and a coach that
       knows the whole score.</p>
     </div>
     <div class="card">
       <h2>Connect</h2>
-      <p>This site keeps everything in your <strong>private</strong> GitHub repo. Paste a
-      fine-grained access token for <code id="setupRepoName">green-room-data</code> —
+      <p>Everything lives in your <strong>private</strong> GitHub repo
+      (<code id="setupRepoName">practice-room-data</code>). Paste an access token once —
       it stays in this browser only.</p>
       <label class="field"><span>Your name</span>
         <input id="setupName" type="text" placeholder="Lox" autocomplete="off">
@@ -50,12 +50,12 @@
       <details class="adv">
         <summary>Advanced</summary>
         <label class="field"><span>Owner</span><input id="setupOwner" type="text" value="loxtyrrell03"></label>
-        <label class="field"><span>Data repo</span><input id="setupRepo" type="text" value="green-room-data"></label>
+        <label class="field"><span>Data repo</span><input id="setupRepo" type="text" value="practice-room-data"></label>
       </details>
-      <button class="btn primary" id="setupGo">Open the Green Room</button>
-      <p class="hint">Need a token? GitHub → Settings → Developer settings →
-      Fine-grained tokens → New. Repository access: <em>only</em> green-room-data.
-      Permissions: Contents → Read and write. Full steps are in the repo README.</p>
+      <button class="btn primary" id="setupGo">Open the practice room</button>
+      <p class="hint">Getting the token: open any terminal and run <code>gh auth token</code> —
+      paste what it prints. (Prefer a scoped token? A fine-grained PAT with Contents
+      read/write on practice-room-data works too — see the repo README.)</p>
       <p class="hint err" id="setupErr" hidden></p>
     </div>
   </section>
@@ -128,10 +128,10 @@
 </main>
 
 <footer class="foot">
-  <span id="footLeft">The Green Room</span>
+  <span id="footLeft">Practice Room</span>
   <span><button class="linkbtn" id="refreshBtn">refresh</button> · <button class="linkbtn" id="resetBtn">disconnect</button></span>
 </footer>
 
-<script src="app.js"></script>
+<script src="app.js?v=2"></script>
 </body>
 </html>

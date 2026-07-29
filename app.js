@@ -1,7 +1,7 @@
-/* The Green Room — app */
+/* Practice Room — app */
 "use strict";
 
-const LS_KEY = "greenroom-config";
+const LS_KEY = "practice-room-config";
 const FILES = { state:"data/state.json", chat:"data/chat.json", journal:"data/journal.json", memory:"memory/MEMORY.md" };
 const $ = (id) => document.getElementById(id);
 
@@ -109,7 +109,7 @@ async function connect(){
     await start();
   } catch (e) {
     err.textContent = e.message; err.hidden = false;
-    $("setupGo").disabled = false; $("setupGo").textContent = "Open the Green Room";
+    $("setupGo").disabled = false; $("setupGo").textContent = "Open the practice room";
   }
 }
 
@@ -127,7 +127,7 @@ async function start(){
     if (!cfg || !cfg.token) return showSetup();
     banner(e.message + " — check the connection.", true);
     showSetup();
-    $("setupGo").disabled = false; $("setupGo").textContent = "Open the Green Room";
+    $("setupGo").disabled = false; $("setupGo").textContent = "Open the practice room";
   }
 }
 
@@ -279,7 +279,7 @@ function startTimer(b){
 }
 function pauseTimer(){ if (!timer) return; timer.remainMs = timer.endsAt - Date.now(); timer.paused = true; }
 function resumeTimer(){ if (!timer) return; timer.endsAt = Date.now() + timer.remainMs; timer.paused = false; }
-function stopTimer(){ if (timer){ clearInterval(timer.iv); timer = null; document.title = "The Green Room"; } }
+function stopTimer(){ if (timer){ clearInterval(timer.iv); timer = null; document.title = "Practice Room"; } }
 
 function tickTimer(){
   if (!timer || timer.paused) return;
@@ -291,7 +291,7 @@ function tickTimer(){
     toggleBlockTo(finished, true);
     return;
   }
-  document.title = `${fmtMs(left)} · Green Room`;
+  document.title = `${fmtMs(left)} · Practice Room`;
   const btn = document.querySelector(`.timerbtn[data-block="${timer.blockId}"]`);
   if (btn){
     const s = state();
