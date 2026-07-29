@@ -49,6 +49,8 @@ attention flags (red *needs work* / amber *focus* / green *secure* — always
 color + word), "why this?" → coach, and scheduled **break blocks** (slim dashed
 cards, 8–12 min per ~50–60 min of playing; tedious work — fingerings, note
 learning, fresh memorisation — sequenced early in the session as a soft rule).
+Future days also carry explicit timed **score-study** blocks, marked *off bench*,
+for forming and testing interpretation rather than passive score reading.
 
 **Focus mode** — one block at a time, full screen: title, instructions, big
 timer, quick-log field, Done→next / Skip / Exit; timer completion auto-advances;

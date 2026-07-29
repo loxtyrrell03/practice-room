@@ -342,12 +342,14 @@ function renderBlockCard(wrap, b){
     const card = document.createElement("div");
     const flag = FLAGS[b.flag] ? b.flag : null;
     const isBreak = String(b.id).startsWith("break");
-    card.className = "card block" + (b.done ? " done" : "") + (flag ? " f-" + flag : "") + (isBreak ? " breakblk" : "");
+    const isStudy = String(b.id).startsWith("score-study");
+    card.className = "card block" + (b.done ? " done" : "") + (flag ? " f-" + flag : "") +
+      (isBreak ? " breakblk" : "") + (isStudy ? " studyblk" : "");
     card.innerHTML = `
       <button class="tick" aria-label="mark done">${b.done ? "✓" : ""}</button>
       <div class="b-body">
         <div class="card-head"><h2></h2>
-          <span class="head-right">${flag ? `<span class="ftag f-${flag}">${FLAGS[flag]}</span>` : ""}<span class="mins">${b.mins} min</span></span>
+          <span class="head-right">${flag ? `<span class="ftag f-${flag}">${FLAGS[flag]}</span>` : ""}${isStudy ? '<span class="block-mode">off bench</span>' : ""}<span class="mins">${b.mins} min</span></span>
         </div>
         <p class="detail"></p>
         <div class="b-actions">
@@ -491,11 +493,12 @@ function renderFocus(){
   const b = bs[focusIdx];
   if (!b) return closeFocus();
   const isBreak = String(b.id).startsWith("break");
+  const isStudy = String(b.id).startsWith("score-study");
   const undone = bs.filter(x => !x.done).length;
   const nxt = bs.slice(focusIdx + 1).find(x => !x.done);
   const ov = $("focusOverlay");
   ov.innerHTML = `<div class="focus-inner">
-    <div class="f-kicker">Day ${Math.max(dayInfo().day,1)} · ${undone} block${undone===1?"":"s"} left · ${b.mins} min</div>
+    <div class="f-kicker">Day ${Math.max(dayInfo().day,1)} · ${undone} block${undone===1?"":"s"} left · ${isStudy ? "off bench · " : ""}${b.mins} min</div>
     <div class="f-title"></div>
     <div class="f-detail"></div>
     ${b.why ? '<div class="f-why"></div>' : ""}

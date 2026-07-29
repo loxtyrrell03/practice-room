@@ -86,6 +86,11 @@ main{width:100%;max-width:780px;margin:0 auto;padding:0 20px 48px;flex:1}
 .block .detail{color:var(--ink2);font-size:.97rem;margin-top:6px}
 .block .whybtn{margin-top:10px}
 
+.block.studyblk{border-left:3px solid var(--amber)}
+.block-mode{color:#ecc788;border:1px solid rgba(226,169,79,.38);border-radius:999px;
+  padding:2px 8px;font-size:.68rem;font-weight:750;letter-spacing:.04em;text-transform:uppercase;
+  white-space:nowrap}
+
 .block.breakblk{padding:12px 24px;background:none;border-style:dashed}
 .block.breakblk h2{font-size:1rem;color:var(--mut)}
 .block.breakblk .detail{font-size:.85rem;color:var(--mut);margin-top:2px}
