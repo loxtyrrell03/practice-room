@@ -95,9 +95,18 @@ def run_coach():
                                    capture_output=True, text=True, timeout=900,
                                    shell=(os.name == "nt"))
             if r.returncode == 0:
-                try: save_session(json.loads(r.stdout).get("session_id"))
-                except Exception: pass
-                log("coach replied.")
+                sid_new = None
+                try:
+                    sid_new = json.loads(r.stdout).get("session_id")
+                except Exception:
+                    import re
+                    m = re.search(r'"session_id"\s*:\s*"([^"]+)"', r.stdout or "")
+                    sid_new = m.group(1) if m else None
+                if sid_new:
+                    save_session(sid_new)
+                    log(f"coach replied (session {sid_new[:8]}…).")
+                else:
+                    log(f"coach replied (no session id in output: {(r.stdout or '')[:120]!r})")
                 break
             log(f"coach run failed (rc={r.returncode}): {(r.stderr or r.stdout)[:200]}")
         else:
