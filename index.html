@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="app.css?v=22">
+<link rel="stylesheet" href="app.css?v=23">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎹</text></svg>">
 </head>
 <body>
@@ -58,12 +58,12 @@
     <div class="hero">
       <div class="today-identity">
         <div>
-          <span class="today-state" id="todayState">● Active plan · today</span>
+          <span class="today-state mismatch" id="todayState" hidden></span>
           <strong id="todayDate">Wednesday 29 July</strong>
         </div>
         <div class="today-identity-side">
           <span id="todayProgress">0 of 0 blocks complete</span>
-          <button class="plan-link" id="viewPlanBtn">Tomorrow is separate →</button>
+          <button class="plan-link" id="viewPlanBtn">See tomorrow →</button>
         </div>
       </div>
       <div class="daybig"><span id="dayNum">Day 1</span></div>
@@ -95,22 +95,10 @@
   <!-- WEEK PLAN -->
   <section id="view-week" class="view" hidden>
     <div class="hero small week-hero">
-      <div class="eyebrow">One date, one plan</div>
-      <h1>Dated plans</h1>
-      <p class="lede" id="weekLede">Today stays fixed. Tomorrow is prepared separately.</p>
+      <div class="eyebrow" id="weekLede">Day 1 · Triage</div>
+      <h1>Plan</h1>
     </div>
-    <section class="forecast" aria-labelledby="forecastTitle">
-      <div class="forecast-head">
-        <div>
-          <h2 id="forecastTitle">Today + next six days</h2>
-          <p>Ready means timed blocks. Rough means direction only. Plans never move dates early.</p>
-        </div>
-        <div class="forecast-certainty" aria-label="Plan certainty">
-          <span><i class="certainty-active"></i> active</span>
-          <span><i class="certainty-draft"></i> ready</span>
-          <span><i class="certainty-rough"></i> rough</span>
-        </div>
-      </div>
+    <section class="forecast" aria-label="Seven-day plan">
       <div id="dayStrip" class="day-strip" role="tablist" aria-label="Choose a day"></div>
       <div id="dayPlan" class="day-plan" role="tabpanel" aria-live="polite"></div>
     </section>
@@ -172,6 +160,6 @@
 
 </div>
 
-<script src="app.js?v=22"></script>
+<script src="app.js?v=23"></script>
 </body>
 </html>

@@ -265,10 +265,10 @@ function renderToday(){
   $("todayDate").textContent = fullPlanDate(planDate);
   $("todayProgress").textContent =
     `${completed} of ${blocks.length} blocks complete`;
+  $("todayState").hidden = planIsToday;
   $("todayState").textContent = planIsToday
-    ? "● Active plan · today"
-    : `✕ Plan date mismatch · ${s.today.date}`;
-  $("todayState").classList.toggle("mismatch", !planIsToday);
+    ? ""
+    : `✕ Wrong date · ${s.today.date}`;
   $("dayNum").textContent = left === 0 ? "Recital day" : `Day ${Math.max(day,1)}`;
   $("curtain").textContent = left > 0 ? `${left} day${left===1?"":"s"} to curtain` :
     (left === 0 ? "Tonight. Trust the work." : "The bow has been taken.");
@@ -327,9 +327,9 @@ function renderWeekPlan(){
 
   const current = phases.find(p => day >= Number(p.startDay) && day <= Number(p.endDay));
   if (current){
-    $("weekLede").textContent = `Day ${Math.max(day,1)} is in ${current.title}. Today remains live; prepared future work stays on its own date.`;
+    $("weekLede").textContent = `Day ${Math.max(day,1)} · ${current.title}`;
   } else {
-    $("weekLede").textContent = "Today remains live; prepared future work stays on its own date.";
+    $("weekLede").textContent = `Day ${Math.max(day,1)}`;
   }
 
   phases.forEach(phase => {
@@ -434,9 +434,13 @@ function renderForecast(phases, currentDay){
     const dated = datedPlan(isoDate);
     const isToday = planDay === currentDay;
     const isTomorrow = planDay === currentDay + 1;
-    const stateName = isToday ? "active"
-      : dated && ["ready","active"].includes(dated.status) ? "ready"
-      : dated && dated.status === "rough" ? "provisional" : "rough";
+    const phase = phases.find(p =>
+      planDay >= Number(p.startDay) && planDay <= Number(p.endDay));
+    const tabMeta = isToday
+      ? `${(state().today.blocks || []).filter(block => block.done).length}/${(state().today.blocks || []).length} done`
+      : dated && ["ready","active"].includes(dated.status)
+        ? `${(dated.blocks || []).length} blocks`
+        : phase ? phase.title : "";
     const btn = document.createElement("button");
     btn.type = "button";
     btn.id = `plan-day-${planDay}`;
@@ -447,16 +451,13 @@ function renderForecast(phases, currentDay){
     btn.innerHTML = `
       <span class="day-tab-weekday"></span>
       <strong></strong>
-      <span class="day-tab-state ${stateName}"></span>`;
+      <span class="day-tab-meta"></span>`;
     btn.querySelector(".day-tab-weekday").textContent =
       isToday ? "Today" : isTomorrow ? "Tomorrow"
         : date.toLocaleDateString("en-GB", {weekday:"short"});
     btn.querySelector("strong").textContent =
       date.toLocaleDateString("en-GB", {day:"numeric", month:"short"});
-    btn.querySelector(".day-tab-state").textContent =
-      stateName === "active" ? "● active"
-      : stateName === "ready" ? "◆ ready"
-      : stateName === "provisional" ? "○ provisional" : "○ rough";
+    btn.querySelector(".day-tab-meta").textContent = tabMeta;
     btn.addEventListener("click", () => {
       selectedPlanDay = planDay;
       renderForecast(phases, currentDay);
@@ -481,7 +482,7 @@ function renderForecast(phases, currentDay){
   } else if (selectedPlanDay === currentDay + 1){
     renderTomorrowPlan(panel, selectedDate, selectedPlanDay);
   } else {
-    renderRoughPlan(panel, selectedDate, selectedPlanDay, phase, selectedDatedPlan);
+    renderRoughPlan(panel, selectedDate, selectedPlanDay, phase);
   }
   panel.setAttribute("aria-labelledby", `plan-day-${selectedPlanDay}`);
 }
@@ -517,9 +518,7 @@ function renderActivePlan(panel, date, planDay){
   panel.innerHTML = `
     <div class="day-plan-top">
       <div>
-        <div class="plan-state active">● Active plan · today</div>
         <h2></h2>
-        <p class="plan-context"></p>
       </div>
       <div class="plan-day-number"></div>
     </div>
@@ -531,58 +530,38 @@ function renderActivePlan(panel, date, planDay){
     <div class="plan-schedule compact"></div>`;
   panel.querySelector("h2").textContent = fullPlanDate(date);
   panel.querySelector(".plan-day-number").textContent = `Day ${planDay}`;
-  panel.querySelector(".plan-context").textContent =
-    "This is the live plan. Completion, timers and logs belong only to this date.";
   panel.querySelector(".active-plan-summary strong").textContent =
-    `${completed} of ${blocks.length} blocks complete`;
+    `${completed} of ${blocks.length} done`;
   panel.querySelector(".active-plan-summary span").textContent =
-    `${formatPracticeMinutes(mins)} playing and off-bench work · breaks separate`;
+    `${formatPracticeMinutes(mins)} total`;
+  panel.querySelector(".plan-link").textContent = "Open today →";
   panel.querySelector(".plan-link").addEventListener("click", () => switchView("today"));
   renderPlanSchedule(panel.querySelector(".plan-schedule"), blocks, {compact:true});
 }
 
 function renderReadyPlan(panel, date, planDay, plan){
   const blocks = plan.blocks || [];
-  const mins = blocks.filter(block => !isBreakBlock(block))
-    .reduce((sum, block) => sum + blockMinutes(block), 0);
-  const evidenceCount = blocks.reduce(
-    (sum, block) => sum + (block.logRefs || []).length, 0
-  );
-  const deferredCount = (plan.deferredLogs || []).length;
+  const mins = blocks.reduce((sum, block) => sum + blockMinutes(block), 0);
   panel.className = "day-plan ready";
   panel.innerHTML = `
     <div class="day-plan-top">
       <div>
-        <div class="plan-state ready">◆ Ready · separate dated plan</div>
         <h2></h2>
-        <p class="plan-context"></p>
       </div>
       <div class="plan-day-number"></div>
     </div>
-    <div class="ready-plan-meta">
-      <span class="ready-plan-time"></span>
-      <span class="ready-plan-evidence"></span>
-    </div>
-    <p class="ready-plan-focus"></p>
+    <div class="ready-plan-meta"></div>
     <div class="plan-schedule"></div>
     <section class="deferred-evidence" hidden>
       <div>
-        <div class="eyebrow">Not lost</div>
-        <h3>Logged work deliberately deferred</h3>
+        <h3>For later</h3>
       </div>
       <div class="deferred-list"></div>
     </section>`;
   panel.querySelector("h2").textContent = fullPlanDate(date);
   panel.querySelector(".plan-day-number").textContent = `Day ${planDay}`;
-  panel.querySelector(".plan-context").textContent =
-    "This plan will become Today on this date. It cannot overwrite the active day early.";
-  panel.querySelector(".ready-plan-time").textContent =
-    `${formatPracticeMinutes(mins)} playing and off-bench work`;
-  panel.querySelector(".ready-plan-evidence").textContent =
-    evidenceCount || deferredCount
-      ? `${evidenceCount + deferredCount} logs accounted · ${evidenceCount} scheduled · ${deferredCount} deferred`
-      : "No practice-log references attached";
-  panel.querySelector(".ready-plan-focus").textContent = plan.focus || "";
+  panel.querySelector(".ready-plan-meta").textContent =
+    `${formatPracticeMinutes(mins)} session · ${blocks.length} blocks`;
   renderPlanSchedule(panel.querySelector(".plan-schedule"), blocks);
   renderDeferredLogs(panel, plan.deferredLogs || []);
 }
@@ -602,7 +581,7 @@ function renderPlanSchedule(root, blocks, {compact=false} = {}){
         </div>
         <p class="plan-block-detail"></p>
         <div class="plan-log-refs" hidden>
-          <strong>From the previous day's logs</strong>
+          <strong>From today</strong>
           <ul></ul>
         </div>
       </div>`;
@@ -654,9 +633,7 @@ function renderTomorrowPlan(panel, date, planDay){
   panel.innerHTML = `
     <div class="day-plan-top">
       <div>
-        <div class="plan-state draft">◆ Draft for tomorrow</div>
         <h2></h2>
-        <p class="plan-context">Built from today's evidence so far. Logs and the debrief can still change the order, minutes and passages.</p>
       </div>
       <div class="plan-day-number"></div>
     </div>
@@ -665,7 +642,7 @@ function renderTomorrowPlan(panel, date, planDay){
   panel.querySelector(".plan-day-number").textContent = `Day ${planDay}`;
   const body = panel.querySelector(".tomorrow-body");
   if (!preview){
-    body.innerHTML = '<p class="forecast-empty">The coach has not drafted tomorrow yet. Debrief tonight to build it.</p>';
+    body.innerHTML = '<p class="forecast-empty">No plan yet. Debrief tonight to build it.</p>';
     return;
   }
   appendTomorrowPreview(body, preview);
@@ -709,45 +686,33 @@ function appendTomorrowPreview(body, preview){
   });
 }
 
-function renderRoughPlan(panel, date, planDay, phase, provisional=null){
+function renderRoughPlan(panel, date, planDay, phase){
   panel.className = "day-plan rough";
   panel.innerHTML = `
     <div class="day-plan-top">
       <div>
-        <div class="plan-state rough">○ Rough phase snapshot</div>
         <h2></h2>
-        <p class="plan-context">Direction only. The previous day's playing evidence will turn this into a timed, passage-specific plan.</p>
       </div>
       <div class="plan-day-number"></div>
     </div>
     <div class="rough-phase">
       <div class="rough-phase-label"></div>
-      <p class="rough-headline"></p>
     </div>
     <section class="rough-targets">
-      <h3>Likely work</h3>
+      <h3>Current outline</h3>
       <ul></ul>
     </section>`;
   panel.querySelector("h2").textContent = fullPlanDate(date);
   panel.querySelector(".plan-day-number").textContent = `Day ${planDay}`;
-  if (provisional && provisional.preview){
-    const note = document.createElement("p");
-    note.className = "tomorrow-intro provisional-note";
-    note.textContent = provisional.preview;
-    panel.querySelector(".day-plan-top").after(note);
-  }
 
   if (!phase){
-    panel.querySelector(".rough-phase-label").textContent = "Awaiting phase outline";
-    panel.querySelector(".rough-headline").textContent =
-      "This date has no phase detail in the current snapshot.";
+    panel.querySelector(".rough-phase-label").textContent = "No outline yet";
     panel.querySelector(".rough-targets").remove();
     return;
   }
 
   panel.querySelector(".rough-phase-label").textContent =
-    `${phase.label || "Phase"} · ${phase.title}`;
-  panel.querySelector(".rough-headline").textContent = phase.headline || "";
+    phase.title;
 
   const goals = (phase.goals || []).filter(goal => !String(goal).trim().startsWith("✓"));
   const exactDay = new RegExp(`\\bDay\\s+${planDay}\\b`, "i");
