@@ -8,7 +8,7 @@ how today actually went.
 ## Use it (zero setup)
 
 Double-click **`Practice Room.bat`** in your local folder
-(`C:\Users\loxty\PracticeRoom`). That's it — the site opens at
+(`C:\Users\loxty\Desktop\Repos\practice-room`). That's it — the site opens at
 `http://localhost:8977`, data reads/writes go straight to disk, and the coach
 runs through your already-logged-in Claude CLI. No tokens, no accounts.
 Everything syncs to the private `practice-room-data` repo in the background as
@@ -17,16 +17,22 @@ a backup (best effort — offline is fine).
 To set the folder up on another machine:
 
 ```bash
-git clone https://github.com/loxtyrrell03/practice-room PracticeRoom
-git clone https://github.com/loxtyrrell03/practice-room-data PracticeRoom/data-repo
+git clone https://github.com/loxtyrrell03/practice-room
+git clone https://github.com/loxtyrrell03/practice-room-data practice-room/data-repo
 ```
 
-## Optional: hosted mode (phone / other devices)
+## Phone / anywhere
 
-The same app is served at https://loxtyrrell03.github.io/practice-room/ and can
-talk to the data repo through the GitHub API — that path needs a token pasted
-once (`gh auth token`), and the coach runs via GitHub Actions (needs the
-`CLAUDE_CODE_OAUTH_TOKEN` secret — see the data repo README). Ignore this
-entirely if you only use it at the piano.
+With the local server running, open **http://localhost:8977/pair** on the PC and
+scan the QR with your phone — it opens the hosted site
+(https://loxtyrrell03.github.io/practice-room/) already signed in. From then on
+the phone works anywhere with wifi: it reads/writes the private data repo
+directly, and messages you send are answered by your PC's coach within ~a minute
+whenever the PC is on.
+
+Want coach replies even with the PC off? One-time, on the PC:
+`claude setup-token`, then
+`gh secret set CLAUDE_CODE_OAUTH_TOKEN -R loxtyrrell03/practice-room-data` —
+GitHub Actions then answers whenever the local server isn't around to.
 
 This public repo contains only the app shell and server — no personal data.
