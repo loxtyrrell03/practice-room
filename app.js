@@ -87,6 +87,10 @@ function wireChrome(){
   $("focusBtn").addEventListener("click", () => openFocus());
   $("mobileFocusBtn").addEventListener("click", () => openFocus());
   window.addEventListener("focus", () => { if (cfg && !pollTimer) refreshQuiet(); });
+  window.addEventListener("pageshow", tickTimer);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") tickTimer();
+  });
 }
 
 async function loadAll(){
@@ -103,8 +107,10 @@ async function loadAll(){
 
 function showApp(){
   $("tabs").hidden = false;
+  restoreTimer();
   renderAll();
   switchView(currentView);
+  tickTimer();
   if (coachQueue.pending || coachQueue.processing) startPolling();
 }
 
@@ -543,7 +549,8 @@ function renderFocus(){
 const FLAGS = { urgent: "✕ needs work", focus: "◆ focus", secure: "✓ secure" };
 
 /* ── block timer ─────────────────────────────────────────── */
-let timer = null; // {blockId, endsAt, remainMs, paused, iv, mins}
+const TIMER_STORAGE_KEY = "practice-room-timer";
+let timer = null; // {blockId, practiceDate, endsAt, remainMs, paused, iv, mins}
 
 function wireTimerButton(btn, b){
   if (b.done){ btn.remove(); return; }
@@ -571,12 +578,75 @@ function paintTimerBtn(btn, b){
 
 function startTimer(b){
   stopTimer();
-  timer = { blockId: b.id, mins: b.mins, endsAt: Date.now() + b.mins*60000, remainMs: b.mins*60000, paused: false, iv: null };
+  timer = {
+    blockId: b.id,
+    practiceDate: state().today.date,
+    mins: b.mins,
+    endsAt: Date.now() + b.mins*60000,
+    remainMs: b.mins*60000,
+    paused: false,
+    iv: null
+  };
+  saveTimer();
   timer.iv = setInterval(tickTimer, 1000);
 }
-function pauseTimer(){ if (!timer) return; timer.remainMs = timer.endsAt - Date.now(); timer.paused = true; }
-function resumeTimer(){ if (!timer) return; timer.endsAt = Date.now() + timer.remainMs; timer.paused = false; }
-function stopTimer(){ if (timer){ clearInterval(timer.iv); timer = null; document.title = "Practice Room"; } }
+function pauseTimer(){
+  if (!timer) return;
+  timer.remainMs = Math.max(0, timer.endsAt - Date.now());
+  timer.paused = true;
+  saveTimer();
+}
+function resumeTimer(){
+  if (!timer) return;
+  timer.endsAt = Date.now() + timer.remainMs;
+  timer.paused = false;
+  saveTimer();
+}
+function stopTimer(){
+  if (timer) clearInterval(timer.iv);
+  timer = null;
+  try { localStorage.removeItem(TIMER_STORAGE_KEY); } catch {}
+  document.title = "Practice Room";
+}
+
+function saveTimer(){
+  if (!timer) return;
+  try {
+    localStorage.setItem(TIMER_STORAGE_KEY, JSON.stringify({
+      blockId: timer.blockId,
+      practiceDate: timer.practiceDate,
+      endsAt: timer.endsAt,
+      remainMs: timer.remainMs,
+      paused: timer.paused,
+      mins: timer.mins
+    }));
+  } catch {}
+}
+
+function restoreTimer(){
+  if (timer) return;
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem(TIMER_STORAGE_KEY)); } catch {}
+  const blocks = state().today.blocks || [];
+  const block = saved && blocks.find(b => b.id === saved.blockId);
+  const valid = block && !block.done &&
+    saved.practiceDate === state().today.date &&
+    Number.isFinite(saved.endsAt) && Number.isFinite(saved.remainMs) &&
+    typeof saved.paused === "boolean";
+  if (!valid){
+    try { localStorage.removeItem(TIMER_STORAGE_KEY); } catch {}
+    return;
+  }
+  timer = {
+    blockId: saved.blockId,
+    practiceDate: saved.practiceDate,
+    mins: Number.isFinite(saved.mins) ? saved.mins : block.mins,
+    endsAt: saved.endsAt,
+    remainMs: Math.max(0, saved.remainMs),
+    paused: saved.paused,
+    iv: setInterval(tickTimer, 1000)
+  };
+}
 
 function tickTimer(){
   if (!timer || timer.paused) return;
