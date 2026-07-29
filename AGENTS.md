@@ -8,7 +8,7 @@ Read this before changing anything in this repo (or its private sibling,
 Practice Room is a personal practice companion for one pianist (Lox) preparing a
 final recital: ~35 minutes of repertoire (Mendelssohn Songs Without Words,
 Bach C♯ minor P&F from WTC I, Scriabin Sonata No. 2, Ligeti Musica ricercata
-1–2) on a hard 28-day countdown. It is not a generic to-do app and not a product
+1–2) on a hard countdown (Day 1 = 29 Jul 2026, recital Day 38 = 4 Sep 2026). It is not a generic to-do app and not a product
 — it is one musician's cockpit for one month of high-stakes work, built around an
 evidence-based practice plan (Chang's *Fundamentals of Piano Practice*
 adjudicated against motor-learning and memory research; the full verdicts live in
@@ -19,8 +19,8 @@ adjudicated against motor-learning and memory research; the full verdicts live i
 One glance answers "what do I do right now, and how bad is it?" One conversation
 a day keeps the whole month on course.
 
-- **The countdown is the spine.** Every screen orients around Day N of 28 and
-  days to curtain. The month has weekly phases (Triage → Integration →
+- **The countdown is the spine.** Every screen orients around the day number and
+  days to curtain. The run has weekly phases (Triage → Integration →
   Performance building → Landing) with measurable gates — the "This week" pill.
 - **The coach owns the trajectory, the pianist owns the piano.** The AI coach
   (Claude, Opus 5, run through the Claude CLI) knows the plan, the research, the
@@ -73,7 +73,7 @@ a day keeps the whole month on course.
 
 ## The finish line
 
-Day 28 (2026-08-25): the pianist walks on stage with a programme that has
+Day 38 (2026-09-04): the pianist walks on stage with a programme that has
 survived three mock performances, a coach that knows exactly how it got there,
 and a journal of the whole month. If a feature doesn't serve that day, it
 doesn't belong.

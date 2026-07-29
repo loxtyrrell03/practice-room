@@ -265,8 +265,8 @@ function renderToday(){
 
   const gates = {7:"Gate day — run the Week 1 checklist with your coach tonight.",
                  14:"Gate day — Week 2 checklist tonight. Programme decisions get made on today's numbers.",
-                 21:"Gate day — Week 3 checklist tonight.",
-                 26:"Final gate — readiness check with your coach tonight."};
+                 24:"Gate day — whole programme memorised + first full filmed run due. Checklist tonight.",
+                 34:"Final gate — last mock done, freeze tomorrow. Readiness check with your coach tonight."};
   $("gateBanner").hidden = !gates[day];
   if (gates[day]) $("gateBanner").textContent = gates[day];
 
