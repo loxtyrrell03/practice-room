@@ -26,8 +26,12 @@ class WindowlessSubprocessTests(unittest.TestCase):
         self.assertTrue(success)
         self.assertEqual("ok", output)
         self.assertEqual(
-            server.WINDOWLESS_SUBPROCESS_FLAGS,
+            server.HIDDEN_SUBPROCESS_FLAGS,
             run.call_args.kwargs["creationflags"],
+        )
+        self.assertIs(
+            server.HIDDEN_SUBPROCESS_STARTUPINFO,
+            run.call_args.kwargs["startupinfo"],
         )
 
     def test_coach_cli_uses_windowless_creation_flags(self):
@@ -48,8 +52,12 @@ class WindowlessSubprocessTests(unittest.TestCase):
                 server.run_claude(Path(temp), "test prompt", "test")
 
         self.assertEqual(
-            server.WINDOWLESS_SUBPROCESS_FLAGS,
+            server.HIDDEN_SUBPROCESS_FLAGS,
             run.call_args.kwargs["creationflags"],
+        )
+        self.assertIs(
+            server.HIDDEN_SUBPROCESS_STARTUPINFO,
+            run.call_args.kwargs["startupinfo"],
         )
         self.assertEqual(server.os.name == "nt", run.call_args.kwargs["shell"])
         save_session.assert_called_once_with("session-from-windowless-test")
@@ -57,11 +65,41 @@ class WindowlessSubprocessTests(unittest.TestCase):
     @unittest.skipUnless(
         server.os.name == "nt", "Windows console behavior only"
     )
-    def test_windows_flag_is_create_no_window(self):
+    def test_windows_process_tree_gets_one_hidden_console(self):
         self.assertEqual(
-            subprocess.CREATE_NO_WINDOW,
-            server.WINDOWLESS_SUBPROCESS_FLAGS,
+            subprocess.CREATE_NEW_CONSOLE,
+            server.HIDDEN_SUBPROCESS_FLAGS,
         )
+        self.assertTrue(
+            server.HIDDEN_SUBPROCESS_STARTUPINFO.dwFlags
+            & subprocess.STARTF_USESHOWWINDOW
+        )
+        self.assertEqual(
+            subprocess.SW_HIDE,
+            server.HIDDEN_SUBPROCESS_STARTUPINFO.wShowWindow,
+        )
+
+        grandchild_probe = (
+            "import ctypes; "
+            "h=ctypes.windll.kernel32.GetConsoleWindow(); "
+            "visible=ctypes.windll.user32.IsWindowVisible(h); "
+            "print(int(bool(h)), visible)"
+        )
+        parent_probe = (
+            "import subprocess, sys; "
+            f"r=subprocess.run([sys.executable, '-c', {grandchild_probe!r}], "
+            "capture_output=True, text=True, check=True); "
+            "print(r.stdout.strip())"
+        )
+        result = subprocess.run(
+            [server.sys.executable, "-c", parent_probe],
+            capture_output=True,
+            text=True,
+            check=True,
+            creationflags=server.HIDDEN_SUBPROCESS_FLAGS,
+            startupinfo=server.HIDDEN_SUBPROCESS_STARTUPINFO,
+        )
+        self.assertEqual("1 0", result.stdout.strip())
 
 
 if __name__ == "__main__":

@@ -15,6 +15,8 @@ import sys
 import threading
 import time
 import webbrowser
+from copy import deepcopy
+from datetime import datetime, timezone
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -43,9 +45,14 @@ MODEL = os.environ.get("COACH_MODEL", "claude-opus-5")
 os.environ.setdefault("MAX_THINKING_TOKENS", "10000")  # medium reasoning
 PHONE_URL = "https://lox.tail89d19b.ts.net:10000/"
 SESSION_FILE = HERE / ".coach-session.json"
-WINDOWLESS_SUBPROCESS_FLAGS = (
-    subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
-)
+if os.name == "nt":
+    HIDDEN_SUBPROCESS_FLAGS = subprocess.CREATE_NEW_CONSOLE
+    HIDDEN_SUBPROCESS_STARTUPINFO = subprocess.STARTUPINFO()
+    HIDDEN_SUBPROCESS_STARTUPINFO.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    HIDDEN_SUBPROCESS_STARTUPINFO.wShowWindow = subprocess.SW_HIDE
+else:
+    HIDDEN_SUBPROCESS_FLAGS = 0
+    HIDDEN_SUBPROCESS_STARTUPINFO = None
 
 # Storage writes, whole coach transactions, and the CLI itself have different
 # lock scopes. Practice notes remain immediately saveable while Claude works.
@@ -56,6 +63,91 @@ sync_lock = threading.Lock()
 pipeline_init_lock = threading.Lock()
 observation_pipeline = None
 coach_queue = None
+
+
+def _utc_now():
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+class CoachActivity:
+    """Small in-memory public trace of a coach turn.
+
+    Raw reasoning and tool inputs stay in Claude's private session transcript.
+    The browser gets only bounded, plain-language activity summaries.
+    """
+
+    def __init__(self, limit=40):
+        self.limit = limit
+        self.lock = threading.RLock()
+        self.runs = {}
+
+    def start(self, run_id, source, model):
+        if not run_id:
+            return
+        now = _utc_now()
+        with self.lock:
+            self.runs[run_id] = {
+                "id": run_id,
+                "source": source,
+                "model": model,
+                "state": "running",
+                "startedAt": now,
+                "updatedAt": now,
+                "finishedAt": None,
+                "events": [],
+            }
+        self.event(run_id, "start", "Coach runtime started")
+
+    def event(self, run_id, kind, label, detail=None):
+        if not run_id:
+            return
+        now = _utc_now()
+        with self.lock:
+            run = self.runs.get(run_id)
+            if not run:
+                return
+            event = {"at": now, "kind": kind, "label": str(label)[:160]}
+            if detail:
+                event["detail"] = str(detail)[:200]
+            previous = run["events"][-1] if run["events"] else None
+            if previous and all(
+                previous.get(key) == event.get(key)
+                for key in ("kind", "label", "detail")
+            ):
+                previous["at"] = now
+            else:
+                run["events"].append(event)
+                run["events"] = run["events"][-self.limit :]
+            run["updatedAt"] = now
+
+    def state(self, run_id, state):
+        if not run_id:
+            return
+        with self.lock:
+            run = self.runs.get(run_id)
+            if run:
+                run["state"] = state
+                run["updatedAt"] = _utc_now()
+
+    def finish(self, run_id, state="done", error=None):
+        if not run_id:
+            return
+        label = "Reply saved" if state == "done" else "Coach run stopped"
+        self.event(run_id, state, label, error)
+        now = _utc_now()
+        with self.lock:
+            run = self.runs.get(run_id)
+            if run:
+                run["state"] = state
+                run["updatedAt"] = now
+                run["finishedAt"] = now
+
+    def snapshot(self):
+        with self.lock:
+            return deepcopy(self.runs)
+
+
+coach_activity = CoachActivity()
 
 
 def load_session():
@@ -85,6 +177,115 @@ def save_session(session_id):
         pass
 
 
+def _claude_project_dir(repo):
+    encoded = re.sub(r"[:\\/]", "-", str(Path(repo).resolve()))
+    return Path.home() / ".claude" / "projects" / encoded
+
+
+def _parse_claude_timestamp(value):
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00")).timestamp()
+    except (TypeError, ValueError):
+        return 0
+
+
+def _relative_activity_path(value, repo):
+    if not value:
+        return None
+    path = Path(str(value))
+    try:
+        return str(path.resolve().relative_to(Path(repo).resolve())).replace("\\", "/")
+    except (OSError, ValueError):
+        return path.name or str(value)
+
+
+def _tool_activity(block, repo):
+    name = str(block.get("name") or "tool")
+    inputs = block.get("input") if isinstance(block.get("input"), dict) else {}
+    target = _relative_activity_path(
+        inputs.get("file_path") or inputs.get("path"), repo
+    )
+    if name == "Read":
+        return "read", f"Read {target or 'a coach file'}"
+    if name == "Edit":
+        return "edit", f"Updated {target or 'a coach file'}"
+    if name == "Write":
+        return "write", f"Wrote {target or 'a coach file'}"
+    if name == "Grep":
+        pattern = str(inputs.get("pattern") or "the plan")[:80]
+        return "search", f"Searched for {pattern}"
+    if name == "Glob":
+        pattern = str(inputs.get("pattern") or "relevant files")[:80]
+        return "search", f"Found files matching {pattern}"
+    if name in {"Bash", "PowerShell"}:
+        return "check", "Ran a verification check"
+    return "tool", f"Used {name}"
+
+
+def _publish_claude_row(row, repo, run_id, started_at):
+    if _parse_claude_timestamp(row.get("timestamp")) < started_at - 1:
+        return
+    if row.get("type") != "assistant":
+        return
+    message = row.get("message") if isinstance(row.get("message"), dict) else {}
+    content = message.get("content")
+    if not isinstance(content, list):
+        return
+    saw_tool = False
+    saw_thinking = False
+    saw_text = False
+    for block in content:
+        if not isinstance(block, dict):
+            continue
+        if block.get("type") == "tool_use":
+            saw_tool = True
+            kind, label = _tool_activity(block, repo)
+            coach_activity.event(run_id, kind, label)
+        elif block.get("type") == "thinking":
+            saw_thinking = True
+        elif block.get("type") == "text" and str(block.get("text") or "").strip():
+            saw_text = True
+    if saw_thinking and not saw_tool:
+        coach_activity.event(run_id, "reasoning", "Working through the plan")
+    elif saw_text and not saw_tool:
+        coach_activity.event(run_id, "draft", "Drafting the reply")
+
+
+def _watch_claude_activity(repo, run_id, started_at, stop):
+    project_dir = _claude_project_dir(repo)
+    offsets = {}
+
+    def scan():
+        if not project_dir.exists():
+            return
+        for path in project_dir.glob("*.jsonl"):
+            position = offsets.get(path, 0)
+            try:
+                with path.open("r", encoding="utf-8", errors="replace") as stream:
+                    stream.seek(position)
+                    while True:
+                        line_position = stream.tell()
+                        line = stream.readline()
+                        if not line:
+                            break
+                        if not line.endswith("\n"):
+                            stream.seek(line_position)
+                            break
+                        position = stream.tell()
+                        try:
+                            row = json.loads(line)
+                        except json.JSONDecodeError:
+                            continue
+                        _publish_claude_row(row, repo, run_id, started_at)
+                offsets[path] = position
+            except OSError:
+                continue
+
+    while not stop.wait(0.35):
+        scan()
+    scan()
+
+
 def log(message):
     print(f"[practice-room] {message}", flush=True)
 
@@ -96,7 +297,8 @@ def git(repo, *args):
             capture_output=True,
             text=True,
             timeout=90,
-            creationflags=WINDOWLESS_SUBPROCESS_FLAGS,
+            creationflags=HIDDEN_SUBPROCESS_FLAGS,
+            startupinfo=HIDDEN_SUBPROCESS_STARTUPINFO,
         )
         return result.returncode == 0, (result.stdout + result.stderr).strip()
     except Exception as exc:
@@ -168,7 +370,7 @@ def get_observation_pipeline():
     return observation_pipeline
 
 
-def run_claude(repo, prompt, source):
+def run_claude(repo, prompt, source, activity_id=None):
     """Run one CLI turn. Transaction ordering is owned by the caller."""
     claude = shutil.which("claude") or "claude"
     base = [
@@ -189,22 +391,43 @@ def run_claude(repo, prompt, source):
         attempts.append(["--resume", session_id, "--model", MODEL])
     attempts += [["--model", MODEL], []]
     errors = []
+    coach_activity.start(activity_id, source, MODEL)
 
     with cli_lock:
+        coach_activity.event(activity_id, "runtime", "Coach process is running")
         for extra in attempts:
             kind = "resumed session" if "--resume" in extra else "fresh session"
             model = extra[-1] if "--model" in extra else "default"
             log(f"coach thinking... ({source}, {kind}, model: {model})")
-            result = subprocess.run(
-                base + extra,
-                input=prompt,
-                cwd=str(repo),
-                capture_output=True,
-                text=True,
+            label = (
+                "Resuming the coach's context"
+                if "--resume" in extra
+                else "Starting a fresh coach context"
+            )
+            coach_activity.event(activity_id, "context", label)
+            stop_monitor = threading.Event()
+            started_at = time.time()
+            monitor = threading.Thread(
+                target=_watch_claude_activity,
+                args=(repo, activity_id, started_at, stop_monitor),
+                daemon=True,
+            )
+            monitor.start()
+            try:
+                result = subprocess.run(
+                    base + extra,
+                    input=prompt,
+                    cwd=str(repo),
+                    capture_output=True,
+                    text=True,
                 timeout=900,
                 shell=(os.name == "nt"),
-                creationflags=WINDOWLESS_SUBPROCESS_FLAGS,
-            )
+                creationflags=HIDDEN_SUBPROCESS_FLAGS,
+                startupinfo=HIDDEN_SUBPROCESS_STARTUPINFO,
+                )
+            finally:
+                stop_monitor.set()
+                monitor.join(1)
             if result.returncode == 0:
                 new_session = None
                 try:
@@ -222,13 +445,22 @@ def run_claude(repo, prompt, source):
                         "coach finished "
                         f"(no session id: {(result.stdout or '')[:120]!r})"
                     )
+                coach_activity.event(
+                    activity_id, "validate", "Reply drafted; checking changes"
+                )
+                coach_activity.state(activity_id, "validating")
                 return
             detail = (
                 result.stderr or result.stdout or f"coach exit {result.returncode}"
             )[:500]
             errors.append(detail)
             log(f"coach run failed (rc={result.returncode}): {detail[:200]}")
-    raise RuntimeError("Claude CLI failed: " + " | ".join(errors))
+            coach_activity.event(
+                activity_id, "retry", "Coach attempt failed; trying the fallback"
+            )
+    error = "Claude CLI failed: " + " | ".join(errors)
+    coach_activity.finish(activity_id, "failed", error)
+    raise RuntimeError(error)
 
 
 def _batch_prompt(stage, batch, job=None):
@@ -267,7 +499,13 @@ reply beside this target after validation.
 
 def _run_staged_claude(stage, batch, job=None):
     source = "daily practice logs" if batch["source"] == "daily" else "coach message"
-    run_claude(stage, _batch_prompt(stage, batch, job), source)
+    activity_id = job.get("id") if job else f"log-{batch['id']}"
+    run_claude(
+        stage,
+        _batch_prompt(stage, batch, job),
+        source,
+        activity_id=activity_id,
+    )
 
 
 class ClaudeCoachRunner:
@@ -321,9 +559,12 @@ class ClaudeCoachRunner:
         for rel, text in extra_outputs.items():
             atomic_write_text(Path(stage) / rel, text)
         repertoire.validate(directive)
+        coach_activity.event(job.get("id"), "save", "Checks passed; saving the reply")
+        coach_activity.state(job.get("id"), "saving")
 
 
-def queue_completed(_job_id):
+def queue_completed(job_id):
+    coach_activity.finish(job_id)
     queue = coach_queue.snapshot()
     if not queue["pending"] and not queue["processing"]:
         threading.Thread(
@@ -366,6 +607,7 @@ class Handler(SimpleHTTPRequestHandler):
                     "name": name.split()[0] if ok and name else "you",
                     "coachRunning": bool(queue["processing"] or log_processing),
                     "coachQueue": queue,
+                    "coachActivity": coach_activity.snapshot(),
                     "practiceLogs": practice_logs,
                 },
             )
