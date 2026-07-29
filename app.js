@@ -4,6 +4,7 @@
 const LS_KEY = "practice-room-config";
 const FILES = { state:"data/state.json", chat:"data/chat.json", journal:"data/journal.json", memory:"memory/MEMORY.md" };
 const $ = (id) => document.getElementById(id);
+const LOCAL = ["localhost","127.0.0.1"].includes(location.hostname);
 
 let cfg = null;           // {name, token, owner, repo}
 let docs = {};            // path -> {obj|text, sha}
@@ -27,6 +28,12 @@ function b64encode(str){
 }
 
 async function ghGet(path, {fresh=false} = {}){
+  if (LOCAL){
+    const r = await fetch(`/api/file?path=${encodeURIComponent(path)}&t=${Date.now()}`, {cache:"no-store"});
+    if (!r.ok) throw new Error(`Read failed (${r.status}) for ${path}`);
+    const text = (await r.json()).content;
+    return { obj: path.endsWith(".json") ? JSON.parse(text) : text, sha: null };
+  }
   const url = api(path) + (fresh ? `?t=${Date.now()}` : "");
   const r = await fetch(url, { headers: headers(), cache:"no-store" });
   if (r.status === 404) throw new Error(`Missing file: ${path}`);
@@ -40,6 +47,15 @@ async function ghGet(path, {fresh=false} = {}){
 
 /* mutate = fn(freshObj) -> newObj ; retries once on conflict */
 async function ghPut(path, mutate, message){
+  if (LOCAL){
+    const cur = await ghGet(path, {fresh:true});
+    const next = mutate(structuredClone(cur.obj));
+    const r = await fetch("/api/file", { method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({ path, content: JSON.stringify(next, null, 2) + "\n" }) });
+    if (!r.ok) throw new Error(`Save failed (${r.status})`);
+    docs[path] = { obj: next, sha: null };
+    return next;
+  }
   for (let attempt = 0; attempt < 3; attempt++){
     const cur = await ghGet(path, {fresh:true});
     const next = mutate(structuredClone(cur.obj));
@@ -56,9 +72,15 @@ async function ghPut(path, mutate, message){
 }
 
 /* ── boot ────────────────────────────────────────────────── */
-window.addEventListener("DOMContentLoaded", () => {
-  try { cfg = JSON.parse(localStorage.getItem(LS_KEY)); } catch {}
+window.addEventListener("DOMContentLoaded", async () => {
   wireChrome();
+  if (LOCAL){
+    cfg = { name: "you", local: true };
+    try { const m = await (await fetch("/api/meta")).json(); if (m.name) cfg.name = m.name; } catch {}
+    $("resetBtn").hidden = true;
+    return start();
+  }
+  try { cfg = JSON.parse(localStorage.getItem(LS_KEY)); } catch {}
   if (cfg && cfg.token) start(); else showSetup();
 });
 
@@ -444,10 +466,17 @@ async function sendMessage(){
   if (!text) return;
   $("send").disabled = true;
   try {
-    await ghPut(FILES.chat, c => {
-      c.messages.push({ role:"user", text, ts: new Date().toISOString() });
-      return c;
-    }, "message from " + (cfg.name || "pianist"));
+    if (LOCAL){
+      const r = await fetch("/api/chat", { method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({ text }) });
+      if (!r.ok) throw new Error("Couldn't reach the coach — is the server window still open?");
+      docs[FILES.chat].obj.messages.push({ role:"user", text, ts: new Date().toISOString() });
+    } else {
+      await ghPut(FILES.chat, c => {
+        c.messages.push({ role:"user", text, ts: new Date().toISOString() });
+        return c;
+      }, "message from " + (cfg.name || "pianist"));
+    }
     box.value = "";
     renderCoach();
     startPolling();
@@ -475,7 +504,9 @@ function startPolling(){
     if (Date.now() - begun > 5*60*1000){
       stopPolling();
       const p = $("pendingMsg");
-      if (p) p.textContent = "No reply yet. If this is the first run, make sure the CLAUDE_CODE_OAUTH_TOKEN secret is set in the data repo (README has the steps) — then check the Actions tab for errors.";
+      if (p) p.textContent = LOCAL
+        ? "No reply yet — check the Practice Room server window for errors (the Claude CLI may need a one-off `claude` login)."
+        : "No reply yet. If this is the first run, make sure the CLAUDE_CODE_OAUTH_TOKEN secret is set in the data repo (README has the steps) — then check the Actions tab for errors.";
     }
   }, 8000);
 }
