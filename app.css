@@ -79,6 +79,36 @@ main{width:100%;max-width:780px;margin:0 auto;padding:0 20px 48px;flex:1}
 .block.breakblk h2{font-size:1rem;color:var(--mut)}
 .block.breakblk .detail{font-size:.85rem;color:var(--mut);margin-top:2px}
 
+.pillrow{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.amberpill{background:var(--amber);color:var(--amber-ink);border:none}
+.amberpill:hover{filter:brightness(1.07);background:var(--amber)}
+
+/* quick log */
+.notebar{display:flex;gap:8px;margin-top:12px}
+.notebar input{flex:1;background:var(--card2);border:1px solid var(--line);border-radius:10px;
+  color:var(--ink);font:400 .92rem var(--sans);padding:9px 13px}
+.notebar input:focus{outline:none;border-color:var(--amber)}
+.notebtn{background:none;border:1px solid var(--line);color:var(--ink2);font:700 .85rem var(--sans);
+  padding:8px 16px;border-radius:10px;cursor:pointer}
+.notebtn:hover{border-color:var(--amber);color:var(--ink)}
+.obslist{margin-top:8px;display:flex;flex-direction:column;gap:4px}
+.obslist div{font-size:.83rem;color:var(--mut)}
+.obslist div::before{content:"✎ ";color:var(--amber)}
+
+/* focus mode */
+.focus-overlay{position:fixed;inset:0;background:var(--bg);z-index:60;overflow:auto;
+  display:flex;flex-direction:column;align-items:center;padding:36px 22px}
+.focus-inner{width:100%;max-width:640px;display:flex;flex-direction:column;gap:14px}
+.f-kicker{color:var(--mut);font-size:.85rem;font-weight:600;letter-spacing:.05em;text-transform:uppercase}
+.f-title{font-family:var(--serif);font-size:2.2rem;font-weight:600;line-height:1.15}
+.f-detail{color:var(--ink2);font-size:1.1rem;line-height:1.65}
+.f-why{color:var(--mut);font-size:.9rem;border-left:3px solid var(--line);padding-left:12px}
+.f-timer-row{display:flex;gap:12px;align-items:center;margin:8px 0;flex-wrap:wrap}
+.f-timer-row .timerbtn{font-size:1.25rem;padding:14px 26px}
+.f-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:6px}
+.f-next{color:var(--mut);font-size:.88rem;margin-top:10px}
+body.focusing{overflow:hidden}
+
 /* attention flags — colour + word, never colour alone */
 .f-urgent{border-left:4px solid var(--red)}
 .f-focus{border-left:4px solid var(--amber)}

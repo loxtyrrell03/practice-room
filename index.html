@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="app.css?v=5">
+<link rel="stylesheet" href="app.css?v=6">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎹</text></svg>">
 </head>
 <body>
@@ -67,7 +67,10 @@
       <div class="curtain" id="curtain">28 days to curtain</div>
       <div class="dots" id="dots"></div>
       <p class="focus" id="focus"></p>
-      <button class="pill" id="weekPill" hidden></button>
+      <div class="pillrow">
+        <button class="pill" id="weekPill" hidden></button>
+        <button class="pill amberpill" id="focusBtn">Focus mode</button>
+      </div>
       <div id="weekPanel" class="card weekcard" hidden></div>
     </div>
     <div id="gateBanner" class="gate" hidden></div>
@@ -129,11 +132,13 @@
 
 </main>
 
+<div id="focusOverlay" class="focus-overlay" hidden></div>
+
 <footer class="foot">
   <span id="footLeft">Practice Room</span>
   <span><button class="linkbtn" id="refreshBtn">refresh</button> · <button class="linkbtn" id="resetBtn">disconnect</button></span>
 </footer>
 
-<script src="app.js?v=5"></script>
+<script src="app.js?v=6"></script>
 </body>
 </html>

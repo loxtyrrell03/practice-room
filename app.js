@@ -2,7 +2,7 @@
 "use strict";
 
 const LS_KEY = "practice-room-config";
-const FILES = { state:"data/state.json", chat:"data/chat.json", journal:"data/journal.json", memory:"memory/MEMORY.md", spots:"data/spots.json" };
+const FILES = { state:"data/state.json", chat:"data/chat.json", journal:"data/journal.json", memory:"memory/MEMORY.md", spots:"data/spots.json", obs:"data/observations.json" };
 const $ = (id) => document.getElementById(id);
 const LOCAL = ["localhost","127.0.0.1"].includes(location.hostname);
 
@@ -114,6 +114,7 @@ function wireChrome(){
   document.querySelectorAll(".chip.q").forEach(c =>
     c.addEventListener("click", () => { $("input").value = c.dataset.q; $("input").focus(); }));
   $("memBtn").addEventListener("click", toggleMemory);
+  $("focusBtn").addEventListener("click", () => openFocus());
   $("weekPill").addEventListener("click", () => {
     const w = $("weekPanel"); w.hidden = !w.hidden;
   });
@@ -152,6 +153,7 @@ async function loadAll(){
   ]);
   docs[FILES.state] = st; docs[FILES.chat] = ch; docs[FILES.journal] = jr;
   try { docs[FILES.spots] = await ghGet(FILES.spots, {fresh:true}); } catch { docs[FILES.spots] = {obj:{spots:[]}, sha:null}; }
+  try { docs[FILES.obs] = await ghGet(FILES.obs, {fresh:true}); } catch { docs[FILES.obs] = {obj:{obs:[]}, sha:null}; }
   try { localStorage.setItem("pr-cache", JSON.stringify({
     s: st.obj, c: ch.obj, j: jr.obj, sp: docs[FILES.spots].obj })); } catch {}
 }
@@ -193,6 +195,7 @@ async function refreshQuiet(){
     ]);
     docs[FILES.state] = st; docs[FILES.chat] = ch; docs[FILES.journal] = jr;
     try { docs[FILES.spots] = await ghGet(FILES.spots, {fresh:true}); } catch {}
+    try { docs[FILES.obs] = await ghGet(FILES.obs, {fresh:true}); } catch {}
     renderAll();
   } catch {}
 }
@@ -297,12 +300,16 @@ function renderToday(){
         <p class="detail"></p>
         <div class="b-actions">
           <button class="timerbtn" data-block="${b.id}"></button>
-          ${isBreak ? "" : '<button class="whybtn">why this? →</button>'}
+          ${isBreak ? "" : '<button class="whybtn">why this? →</button><button class="whybtn focuslink">focus →</button>'}
         </div>
+        ${isBreak ? "" : NOTEBAR_HTML}
       </div>`;
     card.querySelector("h2").textContent = b.title;
     card.querySelector(".detail").textContent = b.detail;
     card.querySelector(".tick").addEventListener("click", () => toggleBlock(b.id));
+    const fl = card.querySelector(".focuslink");
+    if (fl) fl.addEventListener("click", () => openFocus(b.id));
+    wireNotebar(card, b);
     card.querySelector(".whybtn").addEventListener("click", () => {
       switchView("coach");
       $("input").value = `Why am I doing “${b.title}” today — what is it for, and how do I know it's working?`;
@@ -311,6 +318,106 @@ function renderToday(){
     wireTimerButton(card.querySelector(".timerbtn"), b);
     wrap.appendChild(card);
   });
+}
+
+const NOTEBAR_HTML = '<div class="notebar"><input type="text" placeholder="Log it: e.g. RH too loud b.57" maxlength="300"><button class="notebtn">log</button></div><div class="obslist"></div>';
+
+function todaysObs(blockId){
+  const day = dayInfo().day;
+  return (((docs[FILES.obs] || {}).obj || {}).obs || []).filter(o => o.blockId === blockId && o.day === day);
+}
+
+function wireNotebar(root, b){
+  const bar = root.querySelector(".notebar");
+  if (!bar) return;
+  const input = bar.querySelector("input"), btn = bar.querySelector(".notebtn");
+  const submit = () => { logObservation(b, input.value); input.value = ""; };
+  btn.addEventListener("click", submit);
+  input.addEventListener("keydown", e => { if (e.key === "Enter") submit(); });
+  const list = root.querySelector(".obslist");
+  if (list) todaysObs(b.id).slice(-3).forEach(o => {
+    const d = document.createElement("div"); d.textContent = o.text; list.appendChild(d);
+  });
+}
+
+async function logObservation(b, text){
+  text = (text || "").trim();
+  if (!text) return;
+  const entry = { ts: new Date().toISOString(), day: dayInfo().day,
+                  blockId: b.id, block: b.title, text, status: "new" };
+  try {
+    await ghPut(FILES.obs, o => { (o.obs = o.obs || []).push(entry); return o; }, "practice note");
+    renderToday();
+    if (focusIdx !== null) renderFocus();
+  } catch (e){ banner(e.message, true); }
+}
+
+/* ── focus mode ── */
+let focusIdx = null;
+
+function openFocus(startId){
+  const bs = state().today.blocks || [];
+  if (!bs.length) return;
+  let idx = bs.findIndex(x => !x.done);
+  if (startId){ const i = bs.findIndex(x => x.id === startId); if (i >= 0) idx = i; }
+  if (idx < 0) idx = bs.length - 1;
+  focusIdx = idx;
+  document.body.classList.add("focusing");
+  $("focusOverlay").hidden = false;
+  renderFocus();
+}
+
+function closeFocus(){
+  focusIdx = null;
+  document.body.classList.remove("focusing");
+  $("focusOverlay").hidden = true;
+  renderToday();
+}
+
+function focusAdvance(){
+  const bs = state().today.blocks || [];
+  for (let i = focusIdx + 1; i < bs.length; i++){
+    if (!bs[i].done){ focusIdx = i; renderFocus(); return; }
+  }
+  for (let i = 0; i < bs.length; i++){
+    if (!bs[i].done){ focusIdx = i; renderFocus(); return; }
+  }
+  closeFocus();
+}
+
+function renderFocus(){
+  if (focusIdx === null) return;
+  const bs = state().today.blocks || [];
+  const b = bs[focusIdx];
+  if (!b) return closeFocus();
+  const isBreak = String(b.id).startsWith("break");
+  const undone = bs.filter(x => !x.done).length;
+  const nxt = bs.slice(focusIdx + 1).find(x => !x.done);
+  const ov = $("focusOverlay");
+  ov.innerHTML = `<div class="focus-inner">
+    <div class="f-kicker">Day ${Math.max(dayInfo().day,1)} · ${undone} block${undone===1?"":"s"} left · ${b.mins} min</div>
+    <div class="f-title"></div>
+    <div class="f-detail"></div>
+    ${b.why ? '<div class="f-why"></div>' : ""}
+    <div class="f-timer-row"><button class="timerbtn" data-block="${b.id}"></button></div>
+    ${isBreak ? "" : NOTEBAR_HTML}
+    <div class="f-actions">
+      <button class="btn primary" id="fDone">${isBreak ? "Break over → next" : "Done → next"}</button>
+      <button class="notebtn" id="fSkip">Skip for now</button>
+      <button class="notebtn" id="fExit">Exit focus</button>
+    </div>
+    ${nxt ? `<div class="f-next">Up next: ${nxt.title} · ${nxt.mins} min</div>` : '<div class="f-next">Last one of the day.</div>'}
+  </div>`;
+  ov.querySelector(".f-title").textContent = b.title;
+  ov.querySelector(".f-detail").textContent = b.detail || "";
+  if (b.why) ov.querySelector(".f-why").textContent = b.why;
+  wireTimerButton(ov.querySelector(".timerbtn"), b);
+  wireNotebar(ov, b);
+  ov.querySelector("#fDone").addEventListener("click", async () => {
+    await toggleBlockTo(b.id, true); focusAdvance();
+  });
+  ov.querySelector("#fSkip").addEventListener("click", focusAdvance);
+  ov.querySelector("#fExit").addEventListener("click", closeFocus);
 }
 
 /* attention flags: word + color, never color alone */
@@ -359,16 +466,15 @@ function tickTimer(){
     const finished = timer.blockId;
     chime();
     stopTimer();
-    toggleBlockTo(finished, true);
+    toggleBlockTo(finished, true).then(() => { if (focusIdx !== null) focusAdvance(); });
     return;
   }
   document.title = `${fmtMs(left)} · Practice Room`;
-  const btn = document.querySelector(`.timerbtn[data-block="${timer.blockId}"]`);
-  if (btn){
-    const s = state();
-    const b = (s.today.blocks || []).find(x => x.id === timer.blockId);
-    if (b) paintTimerBtn(btn, b);
-  }
+  document.querySelectorAll(`.timerbtn[data-block="${timer.blockId}"]`).forEach(btn => {
+    const st = state();
+    const bb = (st.today.blocks || []).find(x => x.id === timer.blockId);
+    if (bb) paintTimerBtn(btn, bb);
+  });
 }
 
 function fmtMs(ms){
