@@ -1,3 +1,4 @@
+import json
 import tempfile
 import unittest
 from datetime import datetime, timezone
@@ -8,6 +9,50 @@ import server
 
 
 class CoachActivityTests(unittest.TestCase):
+    def test_coach_prompt_names_completed_blocks_from_live_state(self):
+        with tempfile.TemporaryDirectory() as temp:
+            repo = Path(temp)
+            (repo / ".github").mkdir()
+            (repo / "data").mkdir()
+            (repo / ".github" / "coach-prompt.md").write_text(
+                "Coach instructions.\n", encoding="utf-8"
+            )
+            (repo / "data" / "state.json").write_text(
+                json.dumps(
+                    {
+                        "today": {
+                            "date": "2026-07-29",
+                            "blocks": [
+                                {"id": "done-1", "done": True},
+                                {"id": "next-1", "done": False},
+                                {"id": "done-2", "done": True},
+                            ],
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            prompt = server._batch_prompt(
+                repo,
+                {
+                    "id": "coach-batch",
+                    "source": "coach",
+                    "routeObservationIds": [],
+                    "reviewObservationIds": [],
+                    "acknowledge": False,
+                },
+                {
+                    "messageId": "message-1",
+                    "text": "Change the remaining plan.",
+                },
+            )
+
+        header_text = prompt.splitlines()[1]
+        header = json.loads(header_text)
+        self.assertEqual(header["todayDate"], "2026-07-29")
+        self.assertEqual(header["completedBlockIds"], ["done-1", "done-2"])
+
     def test_tool_and_reasoning_events_are_public_but_raw_thinking_is_not(self):
         activity = server.CoachActivity()
         activity.start("job-1", "coach message", "claude-opus-5")

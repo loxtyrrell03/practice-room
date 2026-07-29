@@ -162,6 +162,49 @@ def _has_confirmed_repertoire_change(prepared):
     )
 
 
+def _preserve_completed_blocks(source, target):
+    """Keep same-day completed cards as immutable evidence in a new plan."""
+    if not all(isinstance(item, dict) for item in (source, target)):
+        return target
+    source_today = source.get("today")
+    target_today = target.get("today")
+    if not all(isinstance(item, dict) for item in (source_today, target_today)):
+        return target
+    if source_today.get("date") != target_today.get("date"):
+        return target
+
+    source_blocks = source_today.get("blocks")
+    target_blocks = target_today.get("blocks")
+    if not isinstance(source_blocks, list) or not isinstance(target_blocks, list):
+        return target
+
+    completed = [
+        (index, block)
+        for index, block in enumerate(source_blocks)
+        if isinstance(block, dict) and block.get("id") and block.get("done") is True
+    ]
+    if not completed:
+        return target
+
+    guarded = copy.deepcopy(target)
+    completed_ids = {block["id"] for _, block in completed}
+    guarded_blocks = [
+        block
+        for block in guarded["today"]["blocks"]
+        if not (
+            isinstance(block, dict)
+            and block.get("id") in completed_ids
+        )
+    ]
+    for source_index, block in completed:
+        guarded_blocks.insert(
+            min(source_index, len(guarded_blocks)),
+            copy.deepcopy(block),
+        )
+    guarded["today"]["blocks"] = guarded_blocks
+    return guarded
+
+
 def _merge_repertoire_state(base, result, current):
     """Keep live evidence without resurrecting superseded future planning."""
     merged = _three_way(base, result, current)
@@ -475,6 +518,15 @@ class CoachQueue:
             path = stage / rel
             after = path.read_text(encoding="utf-8")
             before = baseline[rel]
+            if rel == "data/state.json":
+                before_state = json.loads(before)
+                after_state = json.loads(after)
+                guarded_state = _preserve_completed_blocks(
+                    before_state, after_state
+                )
+                after = (
+                    json.dumps(guarded_state, indent=2, ensure_ascii=False) + "\n"
+                )
             if after != before:
                 if rel.endswith(".json"):
                     json.loads(after)
@@ -517,6 +569,10 @@ class CoachQueue:
                     else:
                         merged_obj = _three_way(
                             base_obj, result_obj, current_obj
+                        )
+                    if rel == "data/state.json":
+                        merged_obj = _preserve_completed_blocks(
+                            current_obj, merged_obj
                         )
                     merged = json.dumps(merged_obj, indent=2, ensure_ascii=False) + "\n"
                 else:

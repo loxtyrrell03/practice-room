@@ -481,6 +481,18 @@ def _batch_prompt(stage, batch, job=None):
     }
     if job:
         header["targetMessageId"] = job["messageId"]
+        state = json.loads(
+            (Path(stage) / "data" / "state.json").read_text(encoding="utf-8")
+        )
+        today = state.get("today") or {}
+        header["todayDate"] = today.get("date")
+        header["completedBlockIds"] = [
+            block.get("id")
+            for block in today.get("blocks") or []
+            if isinstance(block, dict)
+            and block.get("id")
+            and block.get("done") is True
+        ]
     prompt = (
         "PRACTICE ROOM SERVER BATCH\n"
         + json.dumps(header, ensure_ascii=False)

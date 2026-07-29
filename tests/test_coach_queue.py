@@ -299,6 +299,227 @@ class CoachQueueTests(unittest.TestCase):
         self.assertEqual(merged["streak"], 7)
         self.assertEqual(merged["tomorrowPreview"], "coach update")
 
+    def test_same_day_replan_cannot_remove_or_rewrite_completed_blocks(self):
+        state_path = self.data / "data/state.json"
+        original_done = {
+            "id": "bach-done",
+            "pieceId": "bach",
+            "title": "Bach — completed work",
+            "mins": 25,
+            "done": True,
+            "detail": "What was actually completed.",
+        }
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        state["today"] = {
+            "date": "2026-07-29",
+            "focus": "Original plan",
+            "blocks": [
+                original_done,
+                {
+                    "id": "scriabin-next",
+                    "title": "Scriabin — old plan",
+                    "mins": 30,
+                    "done": False,
+                },
+            ],
+        }
+        state_path.write_text(
+            json.dumps(state, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+
+        def runner(stage, job):
+            staged_state_path = Path(stage) / "data/state.json"
+            staged = json.loads(staged_state_path.read_text(encoding="utf-8"))
+            staged["today"]["focus"] = "Replanned remainder"
+            staged["today"]["blocks"] = [
+                {
+                    "id": "ligeti-next",
+                    "title": "Ligeti — new plan",
+                    "mins": 20,
+                    "done": False,
+                },
+                {
+                    "id": "bach-done",
+                    "title": "Coach rewrote completed work",
+                    "mins": 5,
+                    "done": False,
+                },
+            ]
+            staged_state_path.write_text(
+                json.dumps(staged, indent=2, ensure_ascii=False) + "\n",
+                encoding="utf-8",
+            )
+            chat_path = Path(stage) / "data/chat.json"
+            chat = json.loads(chat_path.read_text(encoding="utf-8"))
+            chat["messages"].append(
+                {
+                    "role": "coach",
+                    "ts": job["acceptedAt"],
+                    "text": "The unfinished work is replanned.",
+                }
+            )
+            chat_path.write_text(
+                json.dumps(chat, indent=2) + "\n", encoding="utf-8"
+            )
+
+        queue = CoachQueue(self.data, runner, retry_base_seconds=0)
+        queue.accept("Change the rest of today's plan", "same-day-replan")
+        queue.drain_until_idle(ignore_retry_time=True)
+
+        final = json.loads(state_path.read_text(encoding="utf-8"))
+        self.assertEqual(final["today"]["blocks"][0], original_done)
+        self.assertEqual(
+            [block["id"] for block in final["today"]["blocks"]],
+            ["bach-done", "ligeti-next"],
+        )
+        self.assertEqual(final["today"]["focus"], "Replanned remainder")
+
+    def test_new_day_plan_replaces_prior_completed_blocks(self):
+        state_path = self.data / "data/state.json"
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        state["today"] = {
+            "date": "2026-07-29",
+            "focus": "Day 1",
+            "blocks": [
+                {
+                    "id": "day-1-done",
+                    "title": "Day 1 work",
+                    "mins": 20,
+                    "done": True,
+                }
+            ],
+        }
+        state_path.write_text(
+            json.dumps(state, indent=2) + "\n", encoding="utf-8"
+        )
+
+        def runner(stage, job):
+            staged_state_path = Path(stage) / "data/state.json"
+            staged = json.loads(staged_state_path.read_text(encoding="utf-8"))
+            staged["today"] = {
+                "date": "2026-07-30",
+                "focus": "Day 2",
+                "blocks": [
+                    {
+                        "id": "day-2-next",
+                        "title": "Day 2 work",
+                        "mins": 25,
+                        "done": False,
+                    }
+                ],
+            }
+            staged_state_path.write_text(
+                json.dumps(staged, indent=2) + "\n", encoding="utf-8"
+            )
+            chat_path = Path(stage) / "data/chat.json"
+            chat = json.loads(chat_path.read_text(encoding="utf-8"))
+            chat["messages"].append(
+                {
+                    "role": "coach",
+                    "ts": job["acceptedAt"],
+                    "text": "Day 2 is ready.",
+                }
+            )
+            chat_path.write_text(
+                json.dumps(chat, indent=2) + "\n", encoding="utf-8"
+            )
+
+        queue = CoachQueue(self.data, runner, retry_base_seconds=0)
+        queue.accept("Build tomorrow", "new-day-plan")
+        queue.drain_until_idle(ignore_retry_time=True)
+
+        final = json.loads(state_path.read_text(encoding="utf-8"))
+        self.assertEqual(final["today"]["date"], "2026-07-30")
+        self.assertEqual(
+            [block["id"] for block in final["today"]["blocks"]],
+            ["day-2-next"],
+        )
+
+    def test_block_completed_while_coach_plans_is_preserved(self):
+        started = threading.Event()
+        release = threading.Event()
+        state_path = self.data / "data/state.json"
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        state["today"] = {
+            "date": "2026-07-29",
+            "focus": "Original plan",
+            "blocks": [
+                {
+                    "id": "active-now",
+                    "title": "Work in progress",
+                    "mins": 20,
+                    "done": False,
+                    "detail": "Original instructions.",
+                }
+            ],
+        }
+        state_path.write_text(
+            json.dumps(state, indent=2) + "\n", encoding="utf-8"
+        )
+
+        def runner(stage, job):
+            staged_state_path = Path(stage) / "data/state.json"
+            staged = json.loads(staged_state_path.read_text(encoding="utf-8"))
+            staged["today"]["focus"] = "New remainder"
+            staged["today"]["blocks"] = [
+                {
+                    "id": "new-next",
+                    "title": "New next block",
+                    "mins": 15,
+                    "done": False,
+                }
+            ]
+            staged_state_path.write_text(
+                json.dumps(staged, indent=2) + "\n", encoding="utf-8"
+            )
+            chat_path = Path(stage) / "data/chat.json"
+            chat = json.loads(chat_path.read_text(encoding="utf-8"))
+            chat["messages"].append(
+                {
+                    "role": "coach",
+                    "ts": job["acceptedAt"],
+                    "text": "The remaining work is changed.",
+                }
+            )
+            chat_path.write_text(
+                json.dumps(chat, indent=2) + "\n", encoding="utf-8"
+            )
+            started.set()
+            release.wait(5)
+
+        queue = CoachQueue(self.data, runner, retry_base_seconds=0)
+        queue.start()
+        try:
+            queue.accept("Change what comes next", "concurrent-completion")
+            self.assertTrue(started.wait(2))
+            live = json.loads(state_path.read_text(encoding="utf-8"))
+            live["today"]["blocks"][0]["done"] = True
+            state_path.write_text(
+                json.dumps(live, indent=2) + "\n", encoding="utf-8"
+            )
+            release.set()
+            self.assertTrue(queue.wait_idle(5))
+        finally:
+            release.set()
+            queue.stop()
+
+        final = json.loads(state_path.read_text(encoding="utf-8"))
+        self.assertEqual(
+            final["today"]["blocks"][0],
+            {
+                "id": "active-now",
+                "title": "Work in progress",
+                "mins": 20,
+                "done": True,
+                "detail": "Original instructions.",
+            },
+        )
+        self.assertEqual(
+            [block["id"] for block in final["today"]["blocks"]],
+            ["active-now", "new-next"],
+        )
+
     def test_confirmed_drop_cannot_resurrect_concurrently_edited_future_block(self):
         runner_started = threading.Event()
         release_runner = threading.Event()
