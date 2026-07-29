@@ -178,9 +178,29 @@ body.focusing{overflow:hidden}
 .msg.pending{color:var(--mut);font-style:italic}
 .msg .who{font-size:.75rem;font-weight:700;letter-spacing:.05em;text-transform:uppercase;
   color:var(--mut);margin-bottom:4px}
-.msg .queue-state{margin-top:8px;font-size:.76rem;font-weight:600;color:var(--mut)}
+.queue-row{display:flex;align-items:center;justify-content:flex-end;gap:12px;margin-top:9px}
+.msg .queue-state{font-size:.76rem;font-weight:600;color:var(--mut)}
 .msg .queue-state.processing{color:var(--amber)}
 .msg .queue-state.failed{color:#eda28d}
+.activity-toggle{border:0;background:none;color:var(--ink2);font:650 .74rem var(--sans);
+  padding:3px 0;cursor:pointer;text-decoration:underline;text-underline-offset:3px}
+.activity-toggle:hover{color:var(--ink)}
+.coach-activity{margin-top:10px;padding:12px 14px;text-align:left;background:rgba(8,12,10,.38);
+  border:1px solid rgba(255,255,255,.1);border-radius:10px;color:var(--ink2)}
+.activity-head{font-size:.75rem;font-weight:750;letter-spacing:.035em;text-transform:uppercase;
+  color:var(--amber);padding-bottom:9px;border-bottom:1px solid rgba(255,255,255,.09)}
+.activity-list{list-style:none!important;margin:10px 0 0!important;padding:0!important;
+  display:flex;flex-direction:column;gap:7px}
+.activity-event{display:grid;grid-template-columns:72px 1fr;gap:8px;align-items:baseline;
+  font-size:.78rem;line-height:1.35}
+.activity-event time{color:var(--mut);font-variant-numeric:tabular-nums;font-size:.71rem}
+.activity-event span::before{content:"•";display:inline-block;width:13px;color:#9eb6d8}
+.activity-event.kind-reasoning span::before{content:"◆";color:var(--amber);font-size:.62rem}
+.activity-event.kind-edit span::before,.activity-event.kind-write span::before{content:"↳";color:#8fd2a4}
+.activity-event.kind-done span::before{content:"✓";color:#8fd2a4}
+.activity-event.kind-failed span::before,.activity-event.kind-retry span::before{content:"✕";color:#eda28d}
+.activity-note{margin:10px 0 0!important;padding-top:9px;border-top:1px solid rgba(255,255,255,.09);
+  color:var(--mut);font-size:.7rem;line-height:1.4}
 .msg p{margin:0 0 8px}.msg p:last-child{margin:0}
 .msg ul{margin:4px 0 8px 20px}
 .msg strong{color:var(--amber)}

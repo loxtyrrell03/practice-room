@@ -10,6 +10,8 @@ let docs = {};            // path -> {obj|text, sha}
 let pollTimer = null;
 let currentView = "today";
 let coachQueue = {pending:0, processing:0, failed:0, jobs:[]};
+let coachActivity = {};
+const expandedActivities = new Set();
 
 /* ── Private backend ─────────────────────────────────────── */
 async function ghGet(path, {fresh=false} = {}){
@@ -42,6 +44,7 @@ window.addEventListener("DOMContentLoaded", async () => {
     if (!m || m.mode !== "local") throw new Error("private backend unavailable");
     cfg = { name: m.name || "you", practiceLogs: m.practiceLogs || null };
     coachQueue = m.coachQueue || coachQueue;
+    coachActivity = m.coachActivity || {};
     return start();
   } catch {
     if (location.origin !== PRIVATE_ORIGIN) location.replace(PRIVATE_ORIGIN + "/");
@@ -128,6 +131,7 @@ async function refreshQuiet(){
     ]);
     docs[FILES.state] = st; docs[FILES.chat] = ch; docs[FILES.journal] = jr;
     coachQueue = meta.coachQueue || coachQueue;
+    coachActivity = meta.coachActivity || coachActivity;
     try { docs[FILES.spots] = await ghGet(FILES.spots, {fresh:true}); } catch {}
     try { docs[FILES.obs] = await ghGet(FILES.obs, {fresh:true}); } catch {}
     renderAll();
@@ -609,21 +613,90 @@ function bubble(m){
   d.appendChild(body);
   if (m.role === "user" && m.id){
     const job = (coachQueue.jobs || []).find(j => j.messageId === m.id);
-    if (job && job.state !== "done"){
-      const status = document.createElement("div");
-      status.className = "queue-state " + job.state;
-      if (job.state === "processing") status.textContent = "coach is replying…";
-      else if (job.state === "prepared") status.textContent = "reply ready · saving…";
-      else if (job.state === "failed") {
-        status.textContent = "✓ saved · coach failed · retrying";
-        if (job.lastError) status.title = job.lastError;
-      } else {
-        status.textContent = `✓ saved · waiting${job.position ? ` · #${job.position}` : ""}`;
+    const activity = job ? coachActivity[job.id] : null;
+    if (job && (job.state !== "done" || activity)){
+      const row = document.createElement("div");
+      row.className = "queue-row";
+      if (job.state !== "done"){
+        const status = document.createElement("span");
+        status.className = "queue-state " + job.state;
+        if (job.state === "processing") status.textContent = "coach is replying…";
+        else if (job.state === "prepared") status.textContent = "reply ready · saving…";
+        else if (job.state === "failed") {
+          status.textContent = "✓ saved · coach failed · retrying";
+          if (job.lastError) status.title = job.lastError;
+        } else {
+          status.textContent = `✓ saved · waiting${job.position ? ` · #${job.position}` : ""}`;
+        }
+        row.appendChild(status);
       }
-      d.appendChild(status);
+      if (activity && (activity.events || []).length){
+        const toggle = document.createElement("button");
+        const expanded = expandedActivities.has(job.id);
+        toggle.className = "activity-toggle";
+        toggle.type = "button";
+        toggle.setAttribute("aria-expanded", String(expanded));
+        toggle.textContent = expanded ? "▼ hide activity" : "▶ show activity";
+        toggle.addEventListener("click", () => {
+          if (expandedActivities.has(job.id)) expandedActivities.delete(job.id);
+          else expandedActivities.add(job.id);
+          renderCoach();
+        });
+        row.appendChild(toggle);
+      }
+      d.appendChild(row);
+      if (activity && expandedActivities.has(job.id)){
+        d.appendChild(renderCoachActivity(activity));
+      }
     }
   }
   return d;
+}
+
+function renderCoachActivity(activity){
+  const panel = document.createElement("div");
+  panel.className = "coach-activity";
+  const head = document.createElement("div");
+  head.className = "activity-head";
+  const stateLabels = {
+    running:"↻ running", validating:"◆ checking", saving:"◆ saving",
+    done:"✓ done", failed:"✕ failed"
+  };
+  const model = String(activity.model || "coach").replace(/^claude-/, "").replaceAll("-", " ");
+  head.textContent = `${model} · ${formatActivityElapsed(activity)} · ${stateLabels[activity.state] || activity.state}`;
+  panel.appendChild(head);
+
+  const list = document.createElement("ol");
+  list.className = "activity-list";
+  (activity.events || []).forEach(event => {
+    const item = document.createElement("li");
+    item.className = "activity-event kind-" + (event.kind || "event");
+    const stamp = document.createElement("time");
+    const parsed = new Date(event.at);
+    stamp.textContent = Number.isNaN(parsed.getTime()) ? "" :
+      parsed.toLocaleTimeString([], {hour:"2-digit", minute:"2-digit", second:"2-digit"});
+    const label = document.createElement("span");
+    label.textContent = event.label;
+    item.append(stamp, label);
+    list.appendChild(item);
+  });
+  panel.appendChild(list);
+
+  const note = document.createElement("p");
+  note.className = "activity-note";
+  note.textContent = "Tool activity and reasoning stages are shown. Private internal reasoning is not exposed.";
+  panel.appendChild(note);
+  return panel;
+}
+
+function formatActivityElapsed(activity){
+  const start = new Date(activity.startedAt).getTime();
+  const end = new Date(activity.finishedAt || Date.now()).getTime();
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return "time unavailable";
+  const seconds = Math.max(0, Math.round((end - start) / 1000));
+  const minutes = Math.floor(seconds / 60);
+  const rest = seconds % 60;
+  return minutes ? `${minutes}m ${String(rest).padStart(2, "0")}s` : `${rest}s`;
 }
 
 function scrollThread(){
@@ -692,6 +765,7 @@ function startPolling(){
       ]);
       docs[FILES.chat] = fresh;
       coachQueue = meta.coachQueue || coachQueue;
+      coachActivity = meta.coachActivity || coachActivity;
       renderCoach();
       if (!coachQueue.pending && !coachQueue.processing){
         stopPolling();
@@ -702,7 +776,7 @@ function startPolling(){
         return;
       }
     } catch {}
-  }, 4000);
+  }, 2000);
 }
 function stopPolling(){ if (pollTimer){ clearInterval(pollTimer); pollTimer = null; } }
 

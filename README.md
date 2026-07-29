@@ -24,6 +24,11 @@ deterministic reply ID. A restart resumes queued or prepared work without a
 second visible reply. Backup is deferred until the entire chat queue drains, so
 the GitHub Actions fallback cannot race the local coach.
 
+While a reply is running, **show activity** expands a bounded live trace of the
+model, elapsed time, file reads/edits, searches, verification steps, and
+high-level reasoning phases. Raw private reasoning and tool inputs are never
+sent to the browser.
+
 ## Practice-log durability
 
 The one-line log on each practice block is accepted by a dedicated server

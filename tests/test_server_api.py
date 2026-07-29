@@ -72,6 +72,7 @@ class ObservationApiTests(unittest.TestCase):
         meta_status, meta = self.request("GET", "/api/meta")
         self.assertEqual(200, meta_status)
         self.assertEqual(1, meta["practiceLogs"]["counts"]["pending"])
+        self.assertIn("coachActivity", meta)
 
     def test_generic_file_endpoint_cannot_overwrite_observation_queue(self):
         status, result = self.request(
