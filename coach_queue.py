@@ -21,6 +21,7 @@ from pathlib import Path
 EDITABLE_FILES = (
     "data/chat.json",
     "data/state.json",
+    "data/day-plans.json",
     "data/weekly-plan.json",
     "data/journal.json",
     "data/spots.json",

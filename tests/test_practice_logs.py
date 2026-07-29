@@ -220,6 +220,44 @@ class PracticeLogTests(unittest.TestCase):
                 now=datetime(2026, 7, 29, 12, 0, tzinfo=timezone.utc),
             )
 
+    def test_repair_acknowledges_only_processed_planned_observations(self):
+        pipeline = self.pipeline()
+        processed, _ = pipeline.submit(
+            {
+                "clientId": "planned-log",
+                "day": 1,
+                "blockId": "bach",
+                "block": "Bach",
+                "text": "b.16 tension",
+            },
+            now=datetime(2026, 7, 29, 12, 0, tzinfo=timezone.utc),
+        )
+        pending, _ = pipeline.submit(
+            {
+                "clientId": "pending-log",
+                "day": 1,
+                "blockId": "bach",
+                "block": "Bach",
+                "text": "b.26 join",
+            },
+            now=datetime(2026, 7, 29, 12, 1, tzinfo=timezone.utc),
+        )
+        document = read_json(self.data / "data/observations.json")
+        document["obs"][0]["status"] = "processed"
+        document["obs"][0]["processedAt"] = "2026-07-29T13:00:00Z"
+        document["obs"][0]["processedBy"] = "coach"
+        write_json(self.data / "data/observations.json", document)
+
+        changed = pipeline.acknowledge_processed(
+            [processed["id"], pending["id"]],
+            now=datetime(2026, 7, 29, 19, 20, tzinfo=timezone.utc),
+        )
+
+        self.assertEqual(changed, 1)
+        rows = self.observation_rows()
+        self.assertIsNotNone(rows[0]["acknowledgedAt"])
+        self.assertIsNone(rows[1]["acknowledgedAt"])
+
     def test_daily_batches_all_eligible_logs_without_chat_or_debrief(self):
         pipeline = self.pipeline()
         runner = FakeCoach()

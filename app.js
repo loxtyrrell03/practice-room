@@ -4,6 +4,7 @@
 const PRIVATE_ORIGIN = "https://lox.tail89d19b.ts.net:10000";
 const FILES = {
   state:"data/state.json",
+  dayPlans:"data/day-plans.json",
   weekly:"data/weekly-plan.json",
   chat:"data/chat.json",
   journal:"data/journal.json",
@@ -87,6 +88,11 @@ function wireChrome(){
   $("memBtn").addEventListener("click", toggleMemory);
   $("focusBtn").addEventListener("click", () => openFocus());
   $("mobileFocusBtn").addEventListener("click", () => openFocus());
+  $("viewPlanBtn").addEventListener("click", () => {
+    selectedPlanDay = dayInfo().day + 1;
+    renderWeekPlan();
+    switchView("week");
+  });
   window.addEventListener("focus", () => { if (cfg && !pollTimer) refreshQuiet(); });
   window.addEventListener("pageshow", tickTimer);
   document.addEventListener("visibilitychange", () => {
@@ -99,11 +105,13 @@ async function loadAll(){
     ghGet(FILES.state, {fresh:true}), ghGet(FILES.chat, {fresh:true}), ghGet(FILES.journal, {fresh:true}),
   ]);
   docs[FILES.state] = st; docs[FILES.chat] = ch; docs[FILES.journal] = jr;
+  try { docs[FILES.dayPlans] = await ghGet(FILES.dayPlans, {fresh:true}); } catch { docs[FILES.dayPlans] = {obj:{version:1,plans:[]}, sha:null}; }
   try { docs[FILES.weekly] = await ghGet(FILES.weekly, {fresh:true}); } catch { docs[FILES.weekly] = {obj:{phases:[]}, sha:null}; }
   try { docs[FILES.spots] = await ghGet(FILES.spots, {fresh:true}); } catch { docs[FILES.spots] = {obj:{spots:[]}, sha:null}; }
   try { docs[FILES.obs] = await ghGet(FILES.obs, {fresh:true}); } catch { docs[FILES.obs] = {obj:{obs:[]}, sha:null}; }
   try { localStorage.setItem("pr-cache", JSON.stringify({
-    s: st.obj, w: docs[FILES.weekly].obj, c: ch.obj, j: jr.obj, sp: docs[FILES.spots].obj })); } catch {}
+    s: st.obj, dp: docs[FILES.dayPlans].obj, w: docs[FILES.weekly].obj,
+    c: ch.obj, j: jr.obj, sp: docs[FILES.spots].obj })); } catch {}
 }
 
 function showApp(){
@@ -127,6 +135,7 @@ async function start(){
   try { cached = JSON.parse(localStorage.getItem("pr-cache")); } catch {}
   if (cached){
     docs[FILES.state]   = { obj: cached.s,  sha: null };
+    docs[FILES.dayPlans] = { obj: cached.dp || {version:1,plans:[]}, sha: null };
     docs[FILES.weekly]  = { obj: cached.w || {phases:[]}, sha: null };
     docs[FILES.chat]    = { obj: cached.c,  sha: null };
     docs[FILES.journal] = { obj: cached.j,  sha: null };
@@ -148,6 +157,7 @@ async function refreshQuiet(){
     docs[FILES.state] = st; docs[FILES.chat] = ch; docs[FILES.journal] = jr;
     coachQueue = meta.coachQueue || coachQueue;
     coachActivity = meta.coachActivity || coachActivity;
+    try { docs[FILES.dayPlans] = await ghGet(FILES.dayPlans, {fresh:true}); } catch {}
     try { docs[FILES.weekly] = await ghGet(FILES.weekly, {fresh:true}); } catch {}
     try { docs[FILES.spots] = await ghGet(FILES.spots, {fresh:true}); } catch {}
     try { docs[FILES.obs] = await ghGet(FILES.obs, {fresh:true}); } catch {}
@@ -172,6 +182,7 @@ function banner(text, isErr){
 
 /* ── rendering ───────────────────────────────────────────── */
 function state(){ return docs[FILES.state].obj; }
+function dayPlans(){ return ((docs[FILES.dayPlans] || {}).obj || {version:1, plans:[]}); }
 function chat(){ return docs[FILES.chat].obj; }
 function journal(){ return docs[FILES.journal].obj; }
 
@@ -247,6 +258,17 @@ function renderTop(){
 
 function renderToday(){
   const s = state(); const {day, left, total} = dayInfo();
+  const planDate = new Date(s.today.date + "T12:00:00");
+  const planIsToday = s.today.date === todayISO();
+  const blocks = s.today.blocks || [];
+  const completed = blocks.filter(block => block.done).length;
+  $("todayDate").textContent = fullPlanDate(planDate);
+  $("todayProgress").textContent =
+    `${completed} of ${blocks.length} blocks complete`;
+  $("todayState").textContent = planIsToday
+    ? "● Active plan · today"
+    : `✕ Plan date mismatch · ${s.today.date}`;
+  $("todayState").classList.toggle("mismatch", !planIsToday);
   $("dayNum").textContent = left === 0 ? "Recital day" : `Day ${Math.max(day,1)}`;
   $("curtain").textContent = left > 0 ? `${left} day${left===1?"":"s"} to curtain` :
     (left === 0 ? "Tonight. Trust the work." : "The bow has been taken.");
@@ -280,7 +302,7 @@ function renderToday(){
 
   // blocks
   const wrap = $("blocks"); wrap.innerHTML = "";
-  (s.today.blocks || []).forEach(b => {
+  blocks.forEach(b => {
     try { renderBlockCard(wrap, b); }
     catch (e){
       const c = document.createElement("div");
@@ -305,9 +327,9 @@ function renderWeekPlan(){
 
   const current = phases.find(p => day >= Number(p.startDay) && day <= Number(p.endDay));
   if (current){
-    $("weekLede").textContent = `Day ${Math.max(day,1)} is in ${current.title}. Today's logs sharpen tomorrow; later dates stay deliberately rough.`;
+    $("weekLede").textContent = `Day ${Math.max(day,1)} is in ${current.title}. Today remains live; prepared future work stays on its own date.`;
   } else {
-    $("weekLede").textContent = "Tomorrow in detail; the days beyond it in outline.";
+    $("weekLede").textContent = "Today remains live; prepared future work stays on its own date.";
   }
 
   phases.forEach(phase => {
@@ -395,8 +417,8 @@ function renderForecast(phases, currentDay){
   panel.innerHTML = "";
 
   const total = dayInfo().total;
-  const firstDay = Math.max(1, currentDay + 1);
-  const lastDay = Math.min(total, currentDay + 7);
+  const firstDay = Math.max(1, currentDay);
+  const lastDay = Math.min(total, currentDay + 6);
   if (firstDay > lastDay){
     panel.innerHTML = '<p class="forecast-empty">The recital has passed. The journal holds the completed run.</p>';
     return;
@@ -408,7 +430,13 @@ function renderForecast(phases, currentDay){
 
   for (let planDay = firstDay; planDay <= lastDay; planDay++){
     const date = dateForPlanDay(planDay);
+    const isoDate = localISODate(date);
+    const dated = datedPlan(isoDate);
+    const isToday = planDay === currentDay;
     const isTomorrow = planDay === currentDay + 1;
+    const stateName = isToday ? "active"
+      : dated && ["ready","active"].includes(dated.status) ? "ready"
+      : dated && dated.status === "rough" ? "provisional" : "rough";
     const btn = document.createElement("button");
     btn.type = "button";
     btn.id = `plan-day-${planDay}`;
@@ -419,12 +447,16 @@ function renderForecast(phases, currentDay){
     btn.innerHTML = `
       <span class="day-tab-weekday"></span>
       <strong></strong>
-      <span class="day-tab-state ${isTomorrow ? "draft" : "rough"}"></span>`;
+      <span class="day-tab-state ${stateName}"></span>`;
     btn.querySelector(".day-tab-weekday").textContent =
-      isTomorrow ? "Tomorrow" : date.toLocaleDateString("en-GB", {weekday:"short"});
+      isToday ? "Today" : isTomorrow ? "Tomorrow"
+        : date.toLocaleDateString("en-GB", {weekday:"short"});
     btn.querySelector("strong").textContent =
       date.toLocaleDateString("en-GB", {day:"numeric", month:"short"});
-    btn.querySelector(".day-tab-state").textContent = isTomorrow ? "◆ draft" : "○ rough";
+    btn.querySelector(".day-tab-state").textContent =
+      stateName === "active" ? "● active"
+      : stateName === "ready" ? "◆ ready"
+      : stateName === "provisional" ? "○ provisional" : "○ rough";
     btn.addEventListener("click", () => {
       selectedPlanDay = planDay;
       renderForecast(phases, currentDay);
@@ -434,14 +466,34 @@ function renderForecast(phases, currentDay){
   }
 
   const selectedDate = dateForPlanDay(selectedPlanDay);
+  const selectedISO = localISODate(selectedDate);
+  const selectedDatedPlan = datedPlan(selectedISO);
   const phase = phases.find(p =>
     selectedPlanDay >= Number(p.startDay) && selectedPlanDay <= Number(p.endDay));
-  if (selectedPlanDay === currentDay + 1){
+  if (selectedPlanDay === currentDay){
+    renderActivePlan(panel, selectedDate, selectedPlanDay);
+  } else if (
+    selectedDatedPlan &&
+    ["ready","active"].includes(selectedDatedPlan.status) &&
+    (selectedDatedPlan.blocks || []).length
+  ){
+    renderReadyPlan(panel, selectedDate, selectedPlanDay, selectedDatedPlan);
+  } else if (selectedPlanDay === currentDay + 1){
     renderTomorrowPlan(panel, selectedDate, selectedPlanDay);
   } else {
-    renderRoughPlan(panel, selectedDate, selectedPlanDay, phase);
+    renderRoughPlan(panel, selectedDate, selectedPlanDay, phase, selectedDatedPlan);
   }
   panel.setAttribute("aria-labelledby", `plan-day-${selectedPlanDay}`);
+}
+
+function localISODate(date){
+  const shifted = new Date(date);
+  shifted.setMinutes(shifted.getMinutes() - shifted.getTimezoneOffset());
+  return shifted.toISOString().slice(0, 10);
+}
+
+function datedPlan(date){
+  return (dayPlans().plans || []).find(plan => plan.date === date) || null;
 }
 
 function dateForPlanDay(planDay){
@@ -453,6 +505,146 @@ function dateForPlanDay(planDay){
 function fullPlanDate(date){
   return date.toLocaleDateString("en-GB", {
     weekday:"long", day:"numeric", month:"long"
+  });
+}
+
+function renderActivePlan(panel, date, planDay){
+  const blocks = state().today.blocks || [];
+  const completed = blocks.filter(block => block.done).length;
+  const mins = blocks.filter(block => !isBreakBlock(block))
+    .reduce((sum, block) => sum + blockMinutes(block), 0);
+  panel.className = "day-plan active";
+  panel.innerHTML = `
+    <div class="day-plan-top">
+      <div>
+        <div class="plan-state active">● Active plan · today</div>
+        <h2></h2>
+        <p class="plan-context"></p>
+      </div>
+      <div class="plan-day-number"></div>
+    </div>
+    <div class="active-plan-summary">
+      <strong></strong>
+      <span></span>
+      <button class="plan-link">Open today's working view →</button>
+    </div>
+    <div class="plan-schedule compact"></div>`;
+  panel.querySelector("h2").textContent = fullPlanDate(date);
+  panel.querySelector(".plan-day-number").textContent = `Day ${planDay}`;
+  panel.querySelector(".plan-context").textContent =
+    "This is the live plan. Completion, timers and logs belong only to this date.";
+  panel.querySelector(".active-plan-summary strong").textContent =
+    `${completed} of ${blocks.length} blocks complete`;
+  panel.querySelector(".active-plan-summary span").textContent =
+    `${formatPracticeMinutes(mins)} playing and off-bench work · breaks separate`;
+  panel.querySelector(".plan-link").addEventListener("click", () => switchView("today"));
+  renderPlanSchedule(panel.querySelector(".plan-schedule"), blocks, {compact:true});
+}
+
+function renderReadyPlan(panel, date, planDay, plan){
+  const blocks = plan.blocks || [];
+  const mins = blocks.filter(block => !isBreakBlock(block))
+    .reduce((sum, block) => sum + blockMinutes(block), 0);
+  const evidenceCount = blocks.reduce(
+    (sum, block) => sum + (block.logRefs || []).length, 0
+  );
+  const deferredCount = (plan.deferredLogs || []).length;
+  panel.className = "day-plan ready";
+  panel.innerHTML = `
+    <div class="day-plan-top">
+      <div>
+        <div class="plan-state ready">◆ Ready · separate dated plan</div>
+        <h2></h2>
+        <p class="plan-context"></p>
+      </div>
+      <div class="plan-day-number"></div>
+    </div>
+    <div class="ready-plan-meta">
+      <span class="ready-plan-time"></span>
+      <span class="ready-plan-evidence"></span>
+    </div>
+    <p class="ready-plan-focus"></p>
+    <div class="plan-schedule"></div>
+    <section class="deferred-evidence" hidden>
+      <div>
+        <div class="eyebrow">Not lost</div>
+        <h3>Logged work deliberately deferred</h3>
+      </div>
+      <div class="deferred-list"></div>
+    </section>`;
+  panel.querySelector("h2").textContent = fullPlanDate(date);
+  panel.querySelector(".plan-day-number").textContent = `Day ${planDay}`;
+  panel.querySelector(".plan-context").textContent =
+    "This plan will become Today on this date. It cannot overwrite the active day early.";
+  panel.querySelector(".ready-plan-time").textContent =
+    `${formatPracticeMinutes(mins)} playing and off-bench work`;
+  panel.querySelector(".ready-plan-evidence").textContent =
+    evidenceCount || deferredCount
+      ? `${evidenceCount + deferredCount} logs accounted · ${evidenceCount} scheduled · ${deferredCount} deferred`
+      : "No practice-log references attached";
+  panel.querySelector(".ready-plan-focus").textContent = plan.focus || "";
+  renderPlanSchedule(panel.querySelector(".plan-schedule"), blocks);
+  renderDeferredLogs(panel, plan.deferredLogs || []);
+}
+
+function renderPlanSchedule(root, blocks, {compact=false} = {}){
+  root.innerHTML = "";
+  blocks.forEach((block, index) => {
+    const row = document.createElement("section");
+    const isBreak = isBreakBlock(block);
+    row.className = `plan-block${isBreak ? " break" : ""}${block.done ? " complete" : ""}`;
+    row.innerHTML = `
+      <div class="plan-block-order"></div>
+      <div class="plan-block-main">
+        <div class="plan-block-heading">
+          <h3></h3>
+          <span class="plan-block-mins"></span>
+        </div>
+        <p class="plan-block-detail"></p>
+        <div class="plan-log-refs" hidden>
+          <strong>From the previous day's logs</strong>
+          <ul></ul>
+        </div>
+      </div>`;
+    row.querySelector(".plan-block-order").textContent =
+      block.done ? "✓" : String(index + 1).padStart(2, "0");
+    row.querySelector("h3").textContent = block.title || "Untitled block";
+    row.querySelector(".plan-block-mins").textContent = `${block.mins} min`;
+    const detail = row.querySelector(".plan-block-detail");
+    detail.textContent = compact && !isBreak
+      ? (block.done ? "Completed on this date." : "Still ahead on this date.")
+      : block.detail || "";
+    const references = block.logRefs || [];
+    if (references.length){
+      const evidence = row.querySelector(".plan-log-refs");
+      evidence.hidden = false;
+      const list = evidence.querySelector("ul");
+      references.forEach(reference => {
+        const item = document.createElement("li");
+        item.textContent = reference.note;
+        list.appendChild(item);
+      });
+    }
+    root.appendChild(row);
+  });
+}
+
+function renderDeferredLogs(panel, deferredLogs){
+  if (!deferredLogs.length) return;
+  const section = panel.querySelector(".deferred-evidence");
+  section.hidden = false;
+  const list = section.querySelector(".deferred-list");
+  deferredLogs.forEach(item => {
+    const row = document.createElement("div");
+    row.className = "deferred-row";
+    const note = document.createElement("strong");
+    note.textContent = item.note || "Practice log";
+    const reason = document.createElement("span");
+    const target = new Date(item.targetDate + "T12:00:00");
+    reason.textContent =
+      `${fullPlanDate(target)} · ${item.reason}`;
+    row.append(note, reason);
+    list.appendChild(row);
   });
 }
 
@@ -517,7 +709,7 @@ function appendTomorrowPreview(body, preview){
   });
 }
 
-function renderRoughPlan(panel, date, planDay, phase){
+function renderRoughPlan(panel, date, planDay, phase, provisional=null){
   panel.className = "day-plan rough";
   panel.innerHTML = `
     <div class="day-plan-top">
@@ -538,6 +730,12 @@ function renderRoughPlan(panel, date, planDay, phase){
     </section>`;
   panel.querySelector("h2").textContent = fullPlanDate(date);
   panel.querySelector(".plan-day-number").textContent = `Day ${planDay}`;
+  if (provisional && provisional.preview){
+    const note = document.createElement("p");
+    note.className = "tomorrow-intro provisional-note";
+    note.textContent = provisional.preview;
+    panel.querySelector(".day-plan-top").after(note);
+  }
 
   if (!phase){
     panel.querySelector(".rough-phase-label").textContent = "Awaiting phase outline";

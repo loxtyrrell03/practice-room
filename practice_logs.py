@@ -29,6 +29,7 @@ UK_TZ = ZoneInfo("Europe/London")
 DEFAULT_DAILY_TIME = "20:30"
 OBSERVATIONS_REL = "data/observations.json"
 JOBS_REL = "data/observation-jobs.json"
+DAY_PLANS_REL = "data/day-plans.json"
 DAILY_OUTPUTS = (
     "data/spots.json",
     "data/state.json",
@@ -37,6 +38,7 @@ DAILY_OUTPUTS = (
 COACH_OUTPUTS = (
     "data/chat.json",
     "data/state.json",
+    DAY_PLANS_REL,
     "data/journal.json",
     "data/spots.json",
     "memory/MEMORY.md",
@@ -44,6 +46,7 @@ COACH_OUTPUTS = (
 JSON_OUTPUTS = {
     "data/chat.json",
     "data/state.json",
+    DAY_PLANS_REL,
     "data/journal.json",
     "data/spots.json",
 }
@@ -291,6 +294,9 @@ class ObservationPipeline:
         with self.lock:
             observations, observations_changed = self._load_observations_unlocked()
             jobs, jobs_changed = self._load_jobs_unlocked()
+            day_plans_path = self._path(DAY_PLANS_REL)
+            if not day_plans_path.exists():
+                atomic_write_json(day_plans_path, {"version": 1, "plans": []})
             if observations_changed:
                 atomic_write_json(self.observations_path, observations)
             if jobs_changed:
@@ -386,6 +392,32 @@ class ObservationPipeline:
             "dailyTime": self.daily_time_text,
             "nextDueAt": iso_z(self.next_due(now)),
         }
+
+    def acknowledge_processed(
+        self,
+        observation_ids,
+        *,
+        now: datetime | None = None,
+    ) -> int:
+        """Repair acknowledgment after evidence is visibly placed in a plan."""
+        wanted = {str(observation_id) for observation_id in observation_ids}
+        if not wanted:
+            return 0
+        acknowledged_at = iso_z(self._now(now))
+        changed = 0
+        with self.lock:
+            observations, migrated = self._load_observations_unlocked()
+            for row in observations["obs"]:
+                if (
+                    row.get("id") in wanted
+                    and row.get("status") == "processed"
+                    and not row.get("acknowledgedAt")
+                ):
+                    row["acknowledgedAt"] = acknowledged_at
+                    changed += 1
+            if migrated or changed:
+                atomic_write_json(self.observations_path, observations)
+        return changed
 
     def _eligible(
         self,
@@ -628,6 +660,10 @@ class ObservationPipeline:
             atomic_write_json(self.jobs_path, jobs)
 
     def _copy_stage(self, batch_id: str) -> tuple[Path, dict[str, str]]:
+        with self.lock:
+            day_plans_path = self._path(DAY_PLANS_REL)
+            if not day_plans_path.exists():
+                atomic_write_json(day_plans_path, {"version": 1, "plans": []})
         stage_parent = Path(tempfile.mkdtemp(prefix=f"practice-room-{batch_id}-"))
         stage = stage_parent / "data-repo"
         shutil.copytree(

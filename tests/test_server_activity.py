@@ -45,6 +45,7 @@ class CoachActivityTests(unittest.TestCase):
                 {
                     "messageId": "message-1",
                     "text": "Change the remaining plan.",
+                    "acceptedAt": "2026-07-29T12:00:00Z",
                 },
             )
 
@@ -52,6 +53,8 @@ class CoachActivityTests(unittest.TestCase):
         header = json.loads(header_text)
         self.assertEqual(header["todayDate"], "2026-07-29")
         self.assertEqual(header["completedBlockIds"], ["done-1", "done-2"])
+        self.assertEqual(header["targetLocalDate"], "2026-07-29")
+        self.assertFalse(header["isDebrief"])
 
     def test_tool_and_reasoning_events_are_public_but_raw_thinking_is_not(self):
         activity = server.CoachActivity()

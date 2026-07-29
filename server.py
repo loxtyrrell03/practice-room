@@ -22,6 +22,15 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from coach_queue import CoachQueue
+from day_plans import (
+    DAY_PLANS_REL,
+    empty_day_plans,
+    is_debrief_message,
+    local_date_from_iso,
+    promote_due_plan,
+    read_json as read_day_plan_json,
+    validate_coach_day_change,
+)
 from practice_logs import (
     JOBS_REL,
     OBSERVATIONS_REL,
@@ -375,6 +384,20 @@ def get_observation_pipeline():
     return observation_pipeline
 
 
+def promote_calendar_plan():
+    with coach_transaction_lock:
+        with data_lock:
+            result = promote_due_plan(DATA)
+    if result.get("status") == "promoted":
+        log(f"activated dated plan for {result['date']}")
+    elif result.get("status") == "missing":
+        log(
+            "no ready dated plan for "
+            f"{result['date']}; retaining {result.get('previousDate')}"
+        )
+    return result
+
+
 def run_claude(repo, prompt, source, activity_id=None):
     """Run one CLI turn. Transaction ordering is owned by the caller."""
     claude = shutil.which("claude") or "claude"
@@ -481,6 +504,8 @@ def _batch_prompt(stage, batch, job=None):
     }
     if job:
         header["targetMessageId"] = job["messageId"]
+        header["targetLocalDate"] = local_date_from_iso(job.get("acceptedAt"))
+        header["isDebrief"] = is_debrief_message(job.get("text"))
         state = json.loads(
             (Path(stage) / "data" / "state.json").read_text(encoding="utf-8")
         )
@@ -542,6 +567,12 @@ class ClaudeCoachRunner:
             ledger_before = (Path(inner_stage) / LEDGER_REL).read_text(
                 encoding="utf-8"
             )
+            state_path = Path(inner_stage) / "data" / "state.json"
+            day_plans_path = Path(inner_stage) / DAY_PLANS_REL
+            state_before = json.loads(state_path.read_text(encoding="utf-8"))
+            plans_before = read_day_plan_json(
+                day_plans_path, empty_day_plans()
+            )
             self.coach_run(inner_stage, batch, guarded_job)
             ledger_after = (Path(inner_stage) / LEDGER_REL).read_text(
                 encoding="utf-8"
@@ -550,6 +581,16 @@ class ClaudeCoachRunner:
                 raise RuntimeError(
                     "the coach changed the server-owned repertoire ledger"
                 )
+            validate_coach_day_change(
+                before_state=state_before,
+                after_state=json.loads(state_path.read_text(encoding="utf-8")),
+                before_plans=plans_before,
+                after_plans=read_day_plan_json(
+                    day_plans_path, empty_day_plans()
+                ),
+                job=job,
+                batch=batch,
+            )
             if directive.get("kind") != "none":
                 for rel in (PLAN_REL, REPERTOIRE_REL):
                     extra_outputs[rel] = (Path(inner_stage) / rel).read_text(
@@ -565,7 +606,7 @@ class ClaudeCoachRunner:
         result = staged_pipeline.process_for_coach(
             run_guarded,
             source_key=job["messageId"],
-            is_debrief=job["text"].strip().lower().startswith("debrief"),
+            is_debrief=is_debrief_message(job["text"]),
         )
         if result.get("status") in {"failed", "recovering"}:
             raise RuntimeError(result.get("error") or "coach batch failed")
@@ -704,6 +745,7 @@ def background_loop():
             time.sleep(30)
         first = False
         try:
+            promote_calendar_plan()
             pipeline = get_observation_pipeline()
             result = pipeline.run_due(_run_staged_claude)
             if result.get("status") not in {
@@ -742,6 +784,7 @@ def main():
 
     pipeline = get_observation_pipeline()
     pipeline.migrate()
+    promote_calendar_plan()
     coach_queue = CoachQueue(
         DATA,
         ClaudeCoachRunner(),

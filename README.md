@@ -6,6 +6,13 @@ blocks have built-in timers, piece security meters and a coach (Claude, via the
 Claude CLI) that knows the whole plan, remembers what you tell it, and rebuilds
 tomorrow around how today actually went.
 
+Today and tomorrow are separate dated records. The active `state.today` plan
+cannot be advanced early; the coach writes future work to `data/day-plans.json`,
+and the server promotes a ready plan only when that Europe/London date begins.
+The Plan view shows the current day beside future dates, and ready plans expose
+the exact block attached to every practice log or the dated reason it was
+deferred.
+
 ## Use it (zero setup)
 
 Double-click **`Practice Room.bat`** in your local folder

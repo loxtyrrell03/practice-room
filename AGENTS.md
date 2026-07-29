@@ -39,11 +39,13 @@ nothing stale ever masquerades as current.
 
 **Navigation + forward plan** — a fixed desktop sidebar (compact bottom navigation
 on phone) for Today, Plan, Programme, Coach and Journal, with Focus mode ready in
-the rail. Plan opens with a selectable seven-day calendar: tomorrow shows the
-coach's detailed working draft, while later dates are explicitly rough phase
-snapshots that sharpen as daily evidence arrives. The complete 38-day trajectory
-remains below as an expandable timeline; the coach's live current-week outline
-overrides its matching phase and repertoire changes rewrite all unfinished phases.
+the rail. Plan opens with a selectable seven-day calendar: Today is the fixed
+active plan, tomorrow is a separate timed plan with every source log visibly
+scheduled or explicitly deferred, and later dates are rough phase snapshots
+that sharpen as daily evidence arrives. A ready future plan is promoted only
+when its UK calendar date begins. The complete 38-day trajectory remains below
+as an expandable timeline; the coach's live current-week outline overrides its
+matching phase and repertoire changes rewrite all unfinished phases.
 
 **Today view** — countdown hero + focus line; morning cold-test card (per-piece
 ✓/✕ chips); practice blocks with per-block countdown **timers** (start/pause, chime, auto-done),
@@ -116,7 +118,7 @@ banner. Cache-busted assets (`?v=N` — bump on every deploy).
 - **`practice-room-data` (private):** all state and the coach's brain —
   `data/state.json` (dates, week outline, blocks, pieces), `data/chat.json`,
   `data/journal.json`, `data/spots.json`, `data/observations.json`,
-  `data/repertoire-changes.json`,
+  `data/day-plans.json`, `data/repertoire-changes.json`,
   `.coach-queue.json`, `.coach-results/`, `memory/MEMORY.md`, `context/`
   (plan with the authoritative 38-day timeline
   map, research verdicts, prescriptions, repertoire), `CLAUDE.md` (the coach's
