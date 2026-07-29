@@ -91,9 +91,16 @@ main{width:100%;max-width:780px;margin:0 auto;padding:0 20px 48px;flex:1}
 .notebtn{background:none;border:1px solid var(--line);color:var(--ink2);font:700 .85rem var(--sans);
   padding:8px 16px;border-radius:10px;cursor:pointer}
 .notebtn:hover{border-color:var(--amber);color:var(--ink)}
+.notebtn:disabled{opacity:.55;cursor:wait}
 .obslist{margin-top:8px;display:flex;flex-direction:column;gap:4px}
-.obslist div{font-size:.83rem;color:var(--mut)}
-.obslist div::before{content:"✎ ";color:var(--amber)}
+.obsrow{display:flex;gap:8px;align-items:baseline;justify-content:space-between;
+  font-size:.83rem;color:var(--mut)}
+.obstext::before{content:"✎ ";color:var(--amber)}
+.obsstatus{flex:none;font-size:.72rem;font-weight:700;letter-spacing:.02em}
+.obsstatus.s-pending{color:#ecc788}
+.obsstatus.s-processing{color:#9eb6d8}
+.obsstatus.s-processed{color:#8fd2a4}
+.obsstatus.s-failed{color:#eda28d}
 
 /* focus mode */
 .focus-overlay{position:fixed;inset:0;background:var(--bg);z-index:60;overflow:auto;

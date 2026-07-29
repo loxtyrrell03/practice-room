@@ -14,6 +14,34 @@ runs through your already-logged-in Claude CLI. No tokens, no accounts.
 Everything syncs to the private `practice-room-data` repo in the background as
 a backup (best effort — offline is fine).
 
+## Practice-log durability
+
+The one-line log on each practice block is accepted by a dedicated server
+endpoint and written to disk immediately with a stable ID. Each note visibly
+moves through `saved · pending`, `processing`, `processed`, or
+`saved · failed · retrying`; phone and laptop submissions are serialized so one
+device cannot overwrite the other.
+
+Pending notes are consolidated in one coach batch at **20:30 Europe/London**
+each day. Set `COACH_DAILY_LOG_TIME=HH:MM` before starting the server to change
+that time. If the laptop is asleep or off at the scheduled time, the server runs
+the latest missed batch after the next start or wake. A debrief that routes the
+notes earlier marks them processed, so the daily batch skips them. Daily routing
+never writes a chat reply or journal entry; general notes remain available for
+the next real debrief.
+
+Coach output is staged outside the live data tree and recorded as a prepared
+transaction before apply. A Claude failure retries the same logical daily batch;
+a restart finishes prepared output without generating duplicate spot-history or
+memory effects. GitHub backup failure retries only the push, never the coach
+effects.
+
+Run the isolated fake-runner suite with:
+
+```bash
+python -m unittest discover -s tests -v
+```
+
 To set the folder up on another machine:
 
 ```bash

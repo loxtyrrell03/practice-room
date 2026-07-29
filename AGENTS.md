@@ -51,10 +51,14 @@ breaks render as rest screens. Entered via the amber pill or any block's
 "focus →".
 
 **Practice log (observations)** — a one-line field on every block (list and
-focus mode): "RH too loud b.57" → saved instantly to `data/observations.json`
-with timestamp + day + block; last three shown under the block. The coach
-processes new items on every run: bar-level → spot archive; facts → its records;
-the rest → debrief material, always acknowledged.
+focus mode): "RH too loud b.57" → saved instantly through a concurrency-safe
+server endpoint with a durable ID, timestamp, day, block and visible lifecycle
+(saved/pending/processing/processed/failed). At 20:30 Europe/London, one staged
+daily coach batch routes everything still eligible; start/wake catches up a
+missed slot. Earlier debrief routing makes the daily batch skip those IDs.
+Prepared transactions make retries/restarts idempotent across spot and memory
+effects. Daily routing never fabricates chat, a debrief or a journal entry;
+general notes remain available for acknowledgement at the next real debrief.
 
 **Programme view** — per piece: security meter (0–100, evidence-driven),
 reliable-tempo %, last cold result, attention tag, coach's one-line status, and

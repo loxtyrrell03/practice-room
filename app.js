@@ -39,7 +39,7 @@ window.addEventListener("DOMContentLoaded", async () => {
     const r = await fetch(`/api/meta?t=${Date.now()}`, {cache:"no-store"});
     const m = r.ok ? await r.json() : null;
     if (!m || m.mode !== "local") throw new Error("private backend unavailable");
-    cfg = { name: m.name || "you" };
+    cfg = { name: m.name || "you", practiceLogs: m.practiceLogs || null };
     return start();
   } catch {
     if (location.origin !== PRIVATE_ORIGIN) location.replace(PRIVATE_ORIGIN + "/");
@@ -286,25 +286,70 @@ function wireNotebar(root, b){
   const bar = root.querySelector(".notebar");
   if (!bar) return;
   const input = bar.querySelector("input"), btn = bar.querySelector(".notebtn");
-  const submit = () => { logObservation(b, input.value); input.value = ""; };
+  const submit = async () => {
+    const text = input.value.trim();
+    if (!text) return;
+    input.dataset.pendingId = input.dataset.pendingId || crypto.randomUUID();
+    btn.disabled = true;
+    const saved = await logObservation(b, text, input.dataset.pendingId);
+    btn.disabled = false;
+    if (saved){
+      input.value = "";
+      delete input.dataset.pendingId;
+    }
+  };
   btn.addEventListener("click", submit);
   input.addEventListener("keydown", e => { if (e.key === "Enter") submit(); });
   const list = root.querySelector(".obslist");
   if (list) todaysObs(b.id).slice(-3).forEach(o => {
-    const d = document.createElement("div"); d.textContent = o.text; list.appendChild(d);
+    const d = document.createElement("div");
+    d.className = "obsrow";
+    const note = document.createElement("span");
+    note.className = "obstext";
+    note.textContent = o.text;
+    const status = document.createElement("span");
+    status.className = "obsstatus s-" + (o.status || "pending");
+    const labels = {
+      pending: "✓ saved · pending",
+      processing: "↻ processing",
+      processed: "✓ processed",
+      failed: "! saved · failed · retrying"
+    };
+    status.textContent = labels[o.status] || labels.pending;
+    d.append(note, status);
+    list.appendChild(d);
   });
 }
 
-async function logObservation(b, text){
+async function logObservation(b, text, clientId){
   text = (text || "").trim();
-  if (!text) return;
-  const entry = { ts: new Date().toISOString(), day: dayInfo().day,
-                  blockId: b.id, block: b.title, text, status: "new" };
+  if (!text) return false;
   try {
-    await ghPut(FILES.obs, o => { (o.obs = o.obs || []).push(entry); return o; }, "practice note");
+    const r = await fetch("/api/observations", {
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({
+        clientId,
+        day:dayInfo().day,
+        blockId:b.id,
+        block:b.title,
+        text
+      })
+    });
+    if (!r.ok) throw new Error("Practice log was not saved — try again.");
+    const result = await r.json();
+    const entry = result.observation;
+    const rows = (docs[FILES.obs].obj.obs = docs[FILES.obs].obj.obs || []);
+    const existing = rows.findIndex(o => o.id === entry.id);
+    if (existing >= 0) rows[existing] = entry;
+    else rows.push(entry);
     renderToday();
     if (focusIdx !== null) renderFocus();
-  } catch (e){ banner(e.message, true); }
+    return true;
+  } catch (e){
+    banner(e.message, true);
+    return false;
+  }
 }
 
 /* ── focus mode ── */
