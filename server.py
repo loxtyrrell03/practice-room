@@ -229,18 +229,55 @@ class Handler(SimpleHTTPRequestHandler):
 
         return self._json(404, {"error": "unknown endpoint"})
 
+def gh_token():
+    try:
+        r = subprocess.run(["gh", "auth", "token"], capture_output=True, text=True,
+                           timeout=20, shell=(os.name == "nt"))
+        return r.stdout.strip() or None
+    except Exception:
+        return None
+
 def background_loop():
-    """Every 60 s: pull; if a message arrived from the phone (hosted site),
-    answer it locally; otherwise push any local changes."""
+    """Instant phone pickup: conditional ETag poll of chat.json every 3 s
+    (304 responses are free against the API rate limit), plus quiet autosave."""
+    import urllib.request, urllib.error
+    token = gh_token()
+    etag = None
+    last_autosave = 0.0
+    url = "https://api.github.com/repos/loxtyrrell03/practice-room-data/contents/data/chat.json?ref=main"
     while True:
-        time.sleep(60)
+        time.sleep(3 if token else 60)
         try:
-            git(DATA, "pull", "--rebase")
-            if chat_last_role() == "user" and not coach_running:
-                log("picked up a message from the hosted site — answering locally.")
-                threading.Thread(target=run_coach, daemon=True).start()
-            elif chat_last_role() != "user":
+            changed = False
+            if token:
+                req = urllib.request.Request(url, headers={
+                    "Authorization": f"Bearer {token}",
+                    "Accept": "application/vnd.github+json",
+                    "User-Agent": "practice-room"})
+                if etag:
+                    req.add_header("If-None-Match", etag)
+                try:
+                    with urllib.request.urlopen(req, timeout=15) as resp:
+                        etag = resp.headers.get("ETag")
+                        changed = True
+                except urllib.error.HTTPError as e:
+                    if e.code == 304:
+                        changed = False
+                    elif e.code in (401, 403):
+                        token = gh_token()
+                    else:
+                        raise
+            else:
+                token = gh_token()
+                changed = True  # no token: fall back to a straight pull each minute
+            if changed:
+                git(DATA, "pull", "--rebase")
+                if chat_last_role() == "user" and not coach_running:
+                    log("message from the hosted site — starting the coach now.")
+                    threading.Thread(target=run_coach, daemon=True).start()
+            if time.time() - last_autosave > 120 and chat_last_role() != "user":
                 sync_push("autosave")
+                last_autosave = time.time()
         except Exception:
             pass
 

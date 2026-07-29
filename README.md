@@ -27,8 +27,8 @@ With the local server running, open **http://localhost:8977/pair** on the PC and
 scan the QR with your phone — it opens the hosted site
 (https://loxtyrrell03.github.io/practice-room/) already signed in. From then on
 the phone works anywhere with wifi: it reads/writes the private data repo
-directly, and messages you send are answered by your PC's coach within ~a minute
-whenever the PC is on.
+directly, and messages you send start the coach on your PC within seconds
+whenever it's on.
 
 Want coach replies even with the PC off? One-time, on the PC:
 `claude setup-token`, then
