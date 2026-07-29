@@ -11,7 +11,8 @@ from urllib.parse import urlparse, parse_qs
 HERE = Path(__file__).resolve().parent
 DATA = HERE / "data-repo"
 PORT = 8977
-MODEL = os.environ.get("COACH_MODEL", "claude-fable-5")
+MODEL = os.environ.get("COACH_MODEL", "claude-opus-5")
+os.environ.setdefault("MAX_THINKING_TOKENS", "10000")  # medium reasoning
 HOSTED = "https://loxtyrrell03.github.io/practice-room/"
 
 coach_lock = threading.Lock()
