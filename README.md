@@ -1,9 +1,10 @@
 # Practice Room
 
-Twenty-eight days to the recital. Today's practice blocks with built-in timers,
-piece security meters, a journal, and a coach (Claude, via the Claude CLI) that
-knows the whole plan, remembers what you tell it, and rebuilds tomorrow around
-how today actually went.
+Thirty-eight days to the recital. A fixed navigation rail keeps Today, the full
+week-by-week trajectory, Programme, Coach and Journal in reach. Today's practice
+blocks have built-in timers, piece security meters and a coach (Claude, via the
+Claude CLI) that knows the whole plan, remembers what you tell it, and rebuilds
+tomorrow around how today actually went.
 
 ## Use it (zero setup)
 

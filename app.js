@@ -2,7 +2,15 @@
 "use strict";
 
 const PRIVATE_ORIGIN = "https://lox.tail89d19b.ts.net:10000";
-const FILES = { state:"data/state.json", chat:"data/chat.json", journal:"data/journal.json", memory:"memory/MEMORY.md", spots:"data/spots.json", obs:"data/observations.json" };
+const FILES = {
+  state:"data/state.json",
+  weekly:"data/weekly-plan.json",
+  chat:"data/chat.json",
+  journal:"data/journal.json",
+  memory:"memory/MEMORY.md",
+  spots:"data/spots.json",
+  obs:"data/observations.json"
+};
 const $ = (id) => document.getElementById(id);
 
 let cfg = null;           // {name}
@@ -12,6 +20,7 @@ let currentView = "today";
 let coachQueue = {pending:0, processing:0, failed:0, jobs:[]};
 let coachActivity = {};
 const expandedActivities = new Set();
+const phaseOpenState = new Map();
 
 /* ── Private backend ─────────────────────────────────────── */
 async function ghGet(path, {fresh=false} = {}){
@@ -76,9 +85,7 @@ function wireChrome(){
     c.addEventListener("click", () => { $("input").value = c.dataset.q; $("input").focus(); }));
   $("memBtn").addEventListener("click", toggleMemory);
   $("focusBtn").addEventListener("click", () => openFocus());
-  $("weekPill").addEventListener("click", () => {
-    const w = $("weekPanel"); w.hidden = !w.hidden;
-  });
+  $("mobileFocusBtn").addEventListener("click", () => openFocus());
   window.addEventListener("focus", () => { if (cfg && !pollTimer) refreshQuiet(); });
 }
 
@@ -87,10 +94,11 @@ async function loadAll(){
     ghGet(FILES.state, {fresh:true}), ghGet(FILES.chat, {fresh:true}), ghGet(FILES.journal, {fresh:true}),
   ]);
   docs[FILES.state] = st; docs[FILES.chat] = ch; docs[FILES.journal] = jr;
+  try { docs[FILES.weekly] = await ghGet(FILES.weekly, {fresh:true}); } catch { docs[FILES.weekly] = {obj:{phases:[]}, sha:null}; }
   try { docs[FILES.spots] = await ghGet(FILES.spots, {fresh:true}); } catch { docs[FILES.spots] = {obj:{spots:[]}, sha:null}; }
   try { docs[FILES.obs] = await ghGet(FILES.obs, {fresh:true}); } catch { docs[FILES.obs] = {obj:{obs:[]}, sha:null}; }
   try { localStorage.setItem("pr-cache", JSON.stringify({
-    s: st.obj, c: ch.obj, j: jr.obj, sp: docs[FILES.spots].obj })); } catch {}
+    s: st.obj, w: docs[FILES.weekly].obj, c: ch.obj, j: jr.obj, sp: docs[FILES.spots].obj })); } catch {}
 }
 
 function showApp(){
@@ -112,6 +120,7 @@ async function start(){
   try { cached = JSON.parse(localStorage.getItem("pr-cache")); } catch {}
   if (cached){
     docs[FILES.state]   = { obj: cached.s,  sha: null };
+    docs[FILES.weekly]  = { obj: cached.w || {phases:[]}, sha: null };
     docs[FILES.chat]    = { obj: cached.c,  sha: null };
     docs[FILES.journal] = { obj: cached.j,  sha: null };
     docs[FILES.spots]   = { obj: cached.sp || {spots:[]}, sha: null };
@@ -132,6 +141,7 @@ async function refreshQuiet(){
     docs[FILES.state] = st; docs[FILES.chat] = ch; docs[FILES.journal] = jr;
     coachQueue = meta.coachQueue || coachQueue;
     coachActivity = meta.coachActivity || coachActivity;
+    try { docs[FILES.weekly] = await ghGet(FILES.weekly, {fresh:true}); } catch {}
     try { docs[FILES.spots] = await ghGet(FILES.spots, {fresh:true}); } catch {}
     try { docs[FILES.obs] = await ghGet(FILES.obs, {fresh:true}); } catch {}
     renderAll();
@@ -141,7 +151,8 @@ async function refreshQuiet(){
 function switchView(v){
   currentView = v;
   document.querySelectorAll(".tab").forEach(b => b.classList.toggle("active", b.dataset.view === v));
-  ["today","programme","coach","journal"].forEach(x => $("view-"+x).hidden = (x !== v));
+  ["today","week","programme","coach","journal"].forEach(x => $("view-"+x).hidden = (x !== v));
+  window.scrollTo({top:0, behavior:"auto"});
   if (v === "coach"){ $("coachDot").hidden = true; scrollThread(); }
 }
 
@@ -170,7 +181,7 @@ function dayInfo(){
 
 function renderAll(){
   const broken = [];
-  [["header", renderTop], ["today", renderToday], ["programme", renderProgramme],
+  [["header", renderTop], ["today", renderToday], ["week plan", renderWeekPlan], ["programme", renderProgramme],
    ["coach", renderCoach], ["journal", renderJournal]].forEach(([name, fn]) => {
     try { fn(); } catch (e){ broken.push(`${name}: ${e.message}`); }
   });
@@ -201,20 +212,6 @@ function renderToday(){
   }
   $("focus").textContent = s.today.focus || "";
 
-  const w = s.week;
-  $("weekPill").hidden = !w;
-  if (w){
-    $("weekPill").textContent = `Week ${w.num} — ${w.title} · this week's plan`;
-    const wp = $("weekPanel");
-    wp.innerHTML = `<h2></h2><p class="headline"></p>
-      <div class="w-head">This week</div><ul class="w-goals"></ul>
-      <div class="w-head">Pass the week if</div><ul class="w-gate"></ul>`;
-    wp.querySelector("h2").textContent = `Week ${w.num} — ${w.title} (${w.dates})`;
-    wp.querySelector(".headline").textContent = w.headline || "";
-    (w.goals || []).forEach(g => { const li = document.createElement("li"); li.textContent = g; wp.querySelector(".w-goals").appendChild(li); });
-    (w.gate || []).forEach(g => { const li = document.createElement("li"); li.textContent = g; wp.querySelector(".w-gate").appendChild(li); });
-  }
-
   const gates = {7:"Gate day — run the Week 1 checklist with your coach tonight.",
                  14:"Gate day — Week 2 checklist tonight. Programme decisions get made on today's numbers.",
                  24:"Gate day — whole programme memorised + first full filmed run due. Checklist tonight.",
@@ -243,6 +240,100 @@ function renderToday(){
       c.textContent = (b && b.title ? b.title : "block") + " — display error: " + e.message;
       wrap.appendChild(c);
     }
+  });
+}
+
+function renderWeekPlan(){
+  const wrap = $("weeks");
+  wrap.innerHTML = "";
+  const s = state();
+  const day = dayInfo().day;
+  let phases = ((((docs[FILES.weekly] || {}).obj || {}).phases) || []).map(p => structuredClone(p));
+
+  if (!phases.length && s.week){
+    phases = [{
+      id:`week-${s.week.num}`,
+      week:s.week.num,
+      label:`Week ${s.week.num}`,
+      title:s.week.title,
+      dates:s.week.dates,
+      startDay:day,
+      endDay:day,
+      headline:s.week.headline,
+      goals:s.week.goals || [],
+      gate:{label:"Current gate", criteria:s.week.gate || []}
+    }];
+  }
+
+  const currentWeek = s.week;
+  if (currentWeek){
+    const active = phases.find(p =>
+      Number(p.week) === Number(currentWeek.num) && day >= Number(p.startDay) && day <= Number(p.endDay));
+    if (active){
+      active.title = currentWeek.title || active.title;
+      active.dates = currentWeek.dates || active.dates;
+      active.headline = currentWeek.headline || active.headline;
+      active.goals = currentWeek.goals || active.goals;
+      active.gate = {...(active.gate || {}), criteria:currentWeek.gate || (active.gate || {}).criteria || []};
+    }
+  }
+
+  if (!phases.length){
+    wrap.innerHTML = '<p class="sub">The weekly plan is not available in this snapshot.</p>';
+    return;
+  }
+
+  const current = phases.find(p => day >= Number(p.startDay) && day <= Number(p.endDay));
+  if (current){
+    $("weekLede").textContent = `Day ${Math.max(day,1)} is in ${current.label || `Week ${current.week}`} — ${current.title}. Open any phase to see its targets and gate.`;
+  } else {
+    $("weekLede").textContent = "The current phase and every move between now and the recital.";
+  }
+
+  phases.forEach(phase => {
+    const status = day > Number(phase.endDay) ? "complete"
+      : day >= Number(phase.startDay) ? "current" : "upcoming";
+    const details = document.createElement("details");
+    details.className = `phase ${status}`;
+    details.dataset.phase = phase.id;
+    details.open = phaseOpenState.has(phase.id) ? phaseOpenState.get(phase.id) : false;
+    details.innerHTML = `
+      <summary>
+        <div class="phase-topline">
+          <span class="phase-label"></span>
+          <span class="phase-status ${status}"></span>
+        </div>
+        <h2 class="phase-title"></h2>
+        <div class="phase-range"></div>
+        <p class="phase-headline"></p>
+      </summary>
+      <div class="phase-details">
+        <section class="phase-section goals"><h3>Work of the phase</h3><ul></ul></section>
+        <section class="phase-section plan-gate"><h3></h3><ul></ul></section>
+      </div>`;
+    details.querySelector(".phase-label").textContent = phase.label || `Week ${phase.week}`;
+    const statusText = status === "complete" ? "✓ complete" : status === "current" ? "◆ current" : "○ upcoming";
+    details.querySelector(".phase-status").textContent = statusText;
+    details.querySelector(".phase-title").textContent = phase.title;
+    details.querySelector(".phase-range").textContent =
+      `Days ${phase.startDay}–${phase.endDay} · ${phase.dates}`;
+    details.querySelector(".phase-headline").textContent = phase.headline || "";
+    fillPlanList(details.querySelector(".goals ul"), phase.goals || []);
+    const gate = phase.gate || {};
+    details.querySelector(".plan-gate h3").textContent = gate.label || "End state";
+    const criteria = gate.criteria || [];
+    if (criteria.length) fillPlanList(details.querySelector(".plan-gate ul"), criteria);
+    else details.querySelector(".plan-gate").insertAdjacentHTML("beforeend", '<p class="no-gate">No separate gate. Protect the work already banked.</p>');
+    details.addEventListener("toggle", () => phaseOpenState.set(phase.id, details.open));
+    wrap.appendChild(details);
+  });
+}
+
+function fillPlanList(list, items){
+  items.forEach(item => {
+    const li = document.createElement("li");
+    li.textContent = item;
+    list.appendChild(li);
   });
 }
 
@@ -769,8 +860,12 @@ function startPolling(){
       renderCoach();
       if (!coachQueue.pending && !coachQueue.processing){
         stopPolling();
-        const [st, jr] = await Promise.all([ghGet(FILES.state,{fresh:true}), ghGet(FILES.journal,{fresh:true})]);
-        docs[FILES.state] = st; docs[FILES.journal] = jr;
+        const [st, wp, jr] = await Promise.all([
+          ghGet(FILES.state,{fresh:true}),
+          ghGet(FILES.weekly,{fresh:true}).catch(() => docs[FILES.weekly]),
+          ghGet(FILES.journal,{fresh:true})
+        ]);
+        docs[FILES.state] = st; docs[FILES.weekly] = wp; docs[FILES.journal] = jr;
         renderAll();
         if (currentView !== "coach") $("coachDot").hidden = false;
         return;

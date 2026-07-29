@@ -981,8 +981,9 @@ The server has already removed the confirmed piece and obsolete unfinished
 blocks in this isolated transaction. Recompute the entire remaining plan from
 today: blocks and breaks, current week goals/gates, workload, memorisation and
 learning timeline, performance exposure, physical-risk constraints, cut order,
-and research-backed prescriptions. Remove the piece from all future treatment
-in `context/plan.md` and the active table in `context/repertoire.md`. Preserve
+and research-backed prescriptions. Update every unfinished phase in
+`data/weekly-plan.json`. Remove the piece from all future treatment in
+`context/plan.md` and the active table in `context/repertoire.md`. Preserve
 completed journal entries, completed blocks, and trouble-spot history. Add the
 dated decision to memory and report exactly what was removed and redistributed.
 """
@@ -995,9 +996,10 @@ learningTimeline, memorisationTimeline, performanceExposure,
 physicalRiskConstraints, cutPriority, positive dailyMinutes, gateTargets[],
 and prescriptions[]. Recompute the entire remaining plan, daily blocks and
 breaks, current goals/gates, total workload, performance exposure, physical
-risk, cut order and research-backed work. Update both `context/plan.md` and
-`context/repertoire.md`, add the dated decision to memory, and report what was
-added and what the replan displaced. Mark any non-essential unknown explicitly
-and schedule a test or ask one focused follow-up instead of inventing it.
+risk, cut order and research-backed work. Update every unfinished phase in
+`data/weekly-plan.json`, both `context/plan.md` and `context/repertoire.md`, add
+the dated decision to memory, and report what was added and what the replan
+displaced. Mark any non-essential unknown explicitly and schedule a test or ask
+one focused follow-up instead of inventing it.
 """
     return common

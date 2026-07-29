@@ -61,6 +61,10 @@ class CoachQueueTests(unittest.TestCase):
         fixtures = {
             "data/chat.json": {"messages": []},
             "data/state.json": {"startDate": "2026-07-29", "recitalDate": "2026-09-04"},
+            "data/weekly-plan.json": {
+                "updated": "2026-07-29",
+                "phases": [{"id": "week-1", "title": "Triage"}],
+            },
             "data/journal.json": {"entries": []},
             "data/spots.json": {"spots": []},
             "data/observations.json": {"obs": []},
@@ -122,6 +126,39 @@ class CoachQueueTests(unittest.TestCase):
         self.assertEqual(runner.calls, [item["messageId"] for item in accepted])
         replies = [m for m in self.messages() if m["role"] == "coach"]
         self.assertEqual([m["text"] for m in replies], [f"reply to message {i}" for i in range(12)])
+
+    def test_weekly_plan_update_is_committed_with_coach_reply(self):
+        def runner(stage, job):
+            plan_path = Path(stage) / "data/weekly-plan.json"
+            plan = json.loads(plan_path.read_text(encoding="utf-8"))
+            plan["updated"] = "2026-07-30"
+            plan["phases"].append({"id": "week-2", "title": "Integration"})
+            plan_path.write_text(
+                json.dumps(plan, indent=2) + "\n", encoding="utf-8"
+            )
+            chat_path = Path(stage) / "data/chat.json"
+            chat = json.loads(chat_path.read_text(encoding="utf-8"))
+            chat["messages"].append(
+                {
+                    "role": "coach",
+                    "ts": job["acceptedAt"],
+                    "text": "Future phases updated.",
+                }
+            )
+            chat_path.write_text(
+                json.dumps(chat, indent=2) + "\n", encoding="utf-8"
+            )
+
+        queue = CoachQueue(self.data, runner, retry_base_seconds=0)
+        queue.accept("rebuild the plan", "weekly-plan-request")
+        queue.drain_until_idle(ignore_retry_time=True)
+
+        plan = json.loads(
+            (self.data / "data/weekly-plan.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(plan["updated"], "2026-07-30")
+        self.assertEqual([phase["id"] for phase in plan["phases"]], ["week-1", "week-2"])
+        self.assertEqual(self.messages()[-1]["text"], "Future phases updated.")
 
     def test_concurrent_phone_and_laptop_intake_is_lossless(self):
         runner = FakeRunner()

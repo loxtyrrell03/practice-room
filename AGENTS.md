@@ -37,9 +37,14 @@ nothing stale ever masquerades as current.
 
 ## Feature inventory (current)
 
-**Today view** — countdown hero + focus line; "This week" pill expanding the
-week's goals and gate; morning cold-test card (per-piece ✓/✕ chips); practice
-blocks with per-block countdown **timers** (start/pause, chime, auto-done),
+**Navigation + weekly plan** — a fixed desktop sidebar (compact bottom navigation
+on phone) for Today, Week plan, Programme, Coach and Journal, with Focus mode
+ready in the rail. Week plan shows the complete 38-day trajectory as an
+expandable timeline; the coach's live current-week outline overrides its matching
+phase and repertoire changes rewrite all unfinished phases.
+
+**Today view** — countdown hero + focus line; morning cold-test card (per-piece
+✓/✕ chips); practice blocks with per-block countdown **timers** (start/pause, chime, auto-done),
 attention flags (red *needs work* / amber *focus* / green *secure* — always
 color + word), "why this?" → coach, and scheduled **break blocks** (slim dashed
 cards, 8–12 min per ~50–60 min of playing; tedious work — fingerings, note

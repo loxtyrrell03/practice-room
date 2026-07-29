@@ -21,6 +21,7 @@ from pathlib import Path
 EDITABLE_FILES = (
     "data/chat.json",
     "data/state.json",
+    "data/weekly-plan.json",
     "data/journal.json",
     "data/spots.json",
     "data/observations.json",
@@ -468,7 +469,7 @@ class CoachQueue:
         reply["replyTo"] = job["messageId"]
 
         files = {}
-        for rel in EDITABLE_FILES:
+        for rel in baseline:
             if rel == "data/chat.json":
                 continue
             path = stage / rel
@@ -677,7 +678,11 @@ class CoachQueue:
                 self._ensure_user_message(job)
 
     def _snapshot_editable(self):
-        return {rel: (self.data_dir / rel).read_text(encoding="utf-8") for rel in EDITABLE_FILES}
+        return {
+            rel: (self.data_dir / rel).read_text(encoding="utf-8")
+            for rel in EDITABLE_FILES
+            if (self.data_dir / rel).is_file()
+        }
 
     def _load_queue(self):
         queue = _read_json(self.queue_path, {"version": 1, "nextSequence": 1, "jobs": []})

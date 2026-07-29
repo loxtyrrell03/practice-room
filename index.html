@@ -8,23 +8,36 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="app.css?v=14">
+<link rel="stylesheet" href="app.css?v=15">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎹</text></svg>">
 </head>
 <body>
 
-<header class="top">
-  <div class="brand" id="brand">Practice&nbsp;Room</div>
-  <div class="top-count" id="topCount"></div>
-</header>
+<aside class="sidebar" id="tabs" hidden>
+  <div class="side-head">
+    <div class="brand" id="brand">Practice&nbsp;Room</div>
+    <div class="top-count" id="topCount"></div>
+  </div>
+  <nav class="side-nav" aria-label="Practice Room">
+    <button data-view="today" class="tab active"><span class="nav-index">01</span><span>Today</span></button>
+    <button data-view="week" class="tab"><span class="nav-index">02</span><span>Week plan</span></button>
+    <button data-view="programme" class="tab"><span class="nav-index">03</span><span>Programme</span></button>
+    <button data-view="coach" class="tab"><span class="nav-index">04</span><span>Coach</span><span id="coachDot" class="dot" hidden></span></button>
+    <button data-view="journal" class="tab"><span class="nav-index">05</span><span>Journal</span></button>
+  </nav>
+  <div class="side-actions">
+    <button class="focus-launch" id="focusBtn">
+      <span>Start focus mode</span>
+      <small>today's blocks →</small>
+    </button>
+    <div class="side-meta">
+      <span id="footLeft">Practice Room</span>
+      <button class="linkbtn" id="refreshBtn">refresh</button>
+    </div>
+  </div>
+</aside>
 
-<nav class="tabs" id="tabs" hidden>
-  <button data-view="today" class="tab active">Today</button>
-  <button data-view="programme" class="tab">Programme</button>
-  <button data-view="coach" class="tab">Coach<span id="coachDot" class="dot" hidden></span></button>
-  <button data-view="journal" class="tab">Journal</button>
-</nav>
-
+<div class="app-content">
 <div id="banner" class="banner" hidden></div>
 
 <main id="main">
@@ -36,11 +49,9 @@
       <div class="curtain" id="curtain">28 days to curtain</div>
       <div class="dots" id="dots"></div>
       <p class="focus" id="focus"></p>
-      <div class="pillrow">
-        <button class="pill" id="weekPill" hidden></button>
-        <button class="pill amberpill" id="focusBtn">Focus mode</button>
-      </div>
-      <div id="weekPanel" class="card weekcard" hidden></div>
+      <button class="mobile-focus" id="mobileFocusBtn">
+        <span>Start focus mode</span><small>today's blocks →</small>
+      </button>
     </div>
     <div id="gateBanner" class="gate" hidden></div>
     <div class="card cold">
@@ -58,6 +69,21 @@
       it writes your journal and builds tomorrow.</p>
       <button class="btn primary" id="debriefBtn">Debrief with your coach →</button>
     </div>
+  </section>
+
+  <!-- WEEK PLAN -->
+  <section id="view-week" class="view" hidden>
+    <div class="hero small week-hero">
+      <div class="eyebrow">38-day arc</div>
+      <h1>Week plan</h1>
+      <p class="lede" id="weekLede">The current phase and every move between now and the recital.</p>
+    </div>
+    <div class="week-key" aria-label="Timeline status key">
+      <span><i class="key-now"></i> current</span>
+      <span><i class="key-next"></i> upcoming</span>
+      <span><i class="key-done"></i> complete</span>
+    </div>
+    <div id="weeks" class="week-timeline"></div>
   </section>
 
   <!-- PROGRAMME -->
@@ -103,11 +129,8 @@
 
 <div id="focusOverlay" class="focus-overlay" hidden></div>
 
-<footer class="foot">
-  <span id="footLeft">Practice Room</span>
-  <span><button class="linkbtn" id="refreshBtn">refresh</button></span>
-</footer>
+</div>
 
-<script src="app.js?v=14"></script>
+<script src="app.js?v=15"></script>
 </body>
 </html>
