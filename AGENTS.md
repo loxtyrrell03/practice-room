@@ -37,11 +37,13 @@ nothing stale ever masquerades as current.
 
 ## Feature inventory (current)
 
-**Navigation + weekly plan** — a fixed desktop sidebar (compact bottom navigation
-on phone) for Today, Week plan, Programme, Coach and Journal, with Focus mode
-ready in the rail. Week plan shows the complete 38-day trajectory as an
-expandable timeline; the coach's live current-week outline overrides its matching
-phase and repertoire changes rewrite all unfinished phases.
+**Navigation + forward plan** — a fixed desktop sidebar (compact bottom navigation
+on phone) for Today, Plan, Programme, Coach and Journal, with Focus mode ready in
+the rail. Plan opens with a selectable seven-day calendar: tomorrow shows the
+coach's detailed working draft, while later dates are explicitly rough phase
+snapshots that sharpen as daily evidence arrives. The complete 38-day trajectory
+remains below as an expandable timeline; the coach's live current-week outline
+overrides its matching phase and repertoire changes rewrite all unfinished phases.
 
 **Today view** — countdown hero + focus line; morning cold-test card (per-piece
 ✓/✕ chips); practice blocks with per-block countdown **timers** (start/pause, chime, auto-done),

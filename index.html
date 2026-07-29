@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="app.css?v=20">
+<link rel="stylesheet" href="app.css?v=21">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎹</text></svg>">
 </head>
 <body>
@@ -31,7 +31,7 @@
   </div>
   <nav class="side-nav" aria-label="Practice Room">
     <button data-view="today" class="tab active"><span class="nav-index">01</span><span>Today</span></button>
-    <button data-view="week" class="tab"><span class="nav-index">02</span><span>Week plan</span></button>
+    <button data-view="week" class="tab"><span class="nav-index">02</span><span>Plan</span></button>
     <button data-view="programme" class="tab"><span class="nav-index">03</span><span>Programme</span></button>
     <button data-view="coach" class="tab"><span class="nav-index">04</span><span>Coach</span><span id="coachDot" class="dot" hidden></span></button>
     <button data-view="journal" class="tab"><span class="nav-index">05</span><span>Journal</span></button>
@@ -85,9 +85,28 @@
   <!-- WEEK PLAN -->
   <section id="view-week" class="view" hidden>
     <div class="hero small week-hero">
+      <div class="eyebrow">What comes next</div>
+      <h1>Forward plan</h1>
+      <p class="lede" id="weekLede">Tomorrow in detail; the days beyond it in outline.</p>
+    </div>
+    <section class="forecast" aria-labelledby="forecastTitle">
+      <div class="forecast-head">
+        <div>
+          <h2 id="forecastTitle">Next seven days</h2>
+          <p>Tomorrow is a working draft. Later dates show the phase direction, not fixed instructions.</p>
+        </div>
+        <div class="forecast-certainty" aria-label="Plan certainty">
+          <span><i class="certainty-draft"></i> draft</span>
+          <span><i class="certainty-rough"></i> rough</span>
+        </div>
+      </div>
+      <div id="dayStrip" class="day-strip" role="tablist" aria-label="Choose a day"></div>
+      <div id="dayPlan" class="day-plan" role="tabpanel" aria-live="polite"></div>
+    </section>
+    <div class="arc-head">
       <div class="eyebrow">38-day arc</div>
-      <h1>Week plan</h1>
-      <p class="lede" id="weekLede">The current phase and every move between now and the recital.</p>
+      <h2>Route to the recital</h2>
+      <p>The wider trajectory and the gates that keep it honest.</p>
     </div>
     <div class="week-key" aria-label="Timeline status key">
       <span><i class="key-now"></i> current</span>
@@ -142,6 +161,6 @@
 
 </div>
 
-<script src="app.js?v=20"></script>
+<script src="app.js?v=21"></script>
 </body>
 </html>

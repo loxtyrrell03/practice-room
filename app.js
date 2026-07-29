@@ -21,6 +21,7 @@ let coachQueue = {pending:0, processing:0, failed:0, jobs:[]};
 let coachActivity = {};
 const expandedActivities = new Set();
 const phaseOpenState = new Map();
+let selectedPlanDay = null;
 
 /* ── Private backend ─────────────────────────────────────── */
 async function ghGet(path, {fresh=false} = {}){
@@ -293,37 +294,9 @@ function renderToday(){
 function renderWeekPlan(){
   const wrap = $("weeks");
   wrap.innerHTML = "";
-  const s = state();
   const day = dayInfo().day;
-  let phases = ((((docs[FILES.weekly] || {}).obj || {}).phases) || []).map(p => structuredClone(p));
-
-  if (!phases.length && s.week){
-    phases = [{
-      id:`week-${s.week.num}`,
-      week:s.week.num,
-      label:`Week ${s.week.num}`,
-      title:s.week.title,
-      dates:s.week.dates,
-      startDay:day,
-      endDay:day,
-      headline:s.week.headline,
-      goals:s.week.goals || [],
-      gate:{label:"Current gate", criteria:s.week.gate || []}
-    }];
-  }
-
-  const currentWeek = s.week;
-  if (currentWeek){
-    const active = phases.find(p =>
-      Number(p.week) === Number(currentWeek.num) && day >= Number(p.startDay) && day <= Number(p.endDay));
-    if (active){
-      active.title = currentWeek.title || active.title;
-      active.dates = currentWeek.dates || active.dates;
-      active.headline = currentWeek.headline || active.headline;
-      active.goals = currentWeek.goals || active.goals;
-      active.gate = {...(active.gate || {}), criteria:currentWeek.gate || (active.gate || {}).criteria || []};
-    }
-  }
+  const phases = resolvedPlanPhases(day);
+  renderForecast(phases, day);
 
   if (!phases.length){
     wrap.innerHTML = '<p class="sub">The weekly plan is not available in this snapshot.</p>';
@@ -332,9 +305,9 @@ function renderWeekPlan(){
 
   const current = phases.find(p => day >= Number(p.startDay) && day <= Number(p.endDay));
   if (current){
-    $("weekLede").textContent = `Day ${Math.max(day,1)} is in ${current.label || `Week ${current.week}`} — ${current.title}. Open any phase to see its targets and gate.`;
+    $("weekLede").textContent = `Day ${Math.max(day,1)} is in ${current.title}. Today's logs sharpen tomorrow; later dates stay deliberately rough.`;
   } else {
-    $("weekLede").textContent = "The current phase and every move between now and the recital.";
+    $("weekLede").textContent = "Tomorrow in detail; the days beyond it in outline.";
   }
 
   phases.forEach(phase => {
@@ -374,6 +347,236 @@ function renderWeekPlan(){
     details.addEventListener("toggle", () => phaseOpenState.set(phase.id, details.open));
     wrap.appendChild(details);
   });
+}
+
+function resolvedPlanPhases(day){
+  const s = state();
+  let phases = ((((docs[FILES.weekly] || {}).obj || {}).phases) || [])
+    .map(p => structuredClone(p));
+
+  if (!phases.length && s.week){
+    phases = [{
+      id:`week-${s.week.num}`,
+      week:s.week.num,
+      label:`Week ${s.week.num}`,
+      title:s.week.title,
+      dates:s.week.dates,
+      startDay:day,
+      endDay:day,
+      headline:s.week.headline,
+      goals:s.week.goals || [],
+      gate:{label:"Current gate", criteria:s.week.gate || []}
+    }];
+  }
+
+  const currentWeek = s.week;
+  if (currentWeek){
+    const active = phases.find(p =>
+      Number(p.week) === Number(currentWeek.num) &&
+      day >= Number(p.startDay) && day <= Number(p.endDay));
+    if (active){
+      active.title = currentWeek.title || active.title;
+      active.dates = currentWeek.dates || active.dates;
+      active.headline = currentWeek.headline || active.headline;
+      active.goals = currentWeek.goals || active.goals;
+      active.gate = {
+        ...(active.gate || {}),
+        criteria:currentWeek.gate || (active.gate || {}).criteria || []
+      };
+    }
+  }
+  return phases;
+}
+
+function renderForecast(phases, currentDay){
+  const strip = $("dayStrip");
+  const panel = $("dayPlan");
+  strip.innerHTML = "";
+  panel.innerHTML = "";
+
+  const total = dayInfo().total;
+  const firstDay = Math.max(1, currentDay + 1);
+  const lastDay = Math.min(total, currentDay + 7);
+  if (firstDay > lastDay){
+    panel.innerHTML = '<p class="forecast-empty">The recital has passed. The journal holds the completed run.</p>';
+    return;
+  }
+
+  if (!selectedPlanDay || selectedPlanDay < firstDay || selectedPlanDay > lastDay){
+    selectedPlanDay = firstDay;
+  }
+
+  for (let planDay = firstDay; planDay <= lastDay; planDay++){
+    const date = dateForPlanDay(planDay);
+    const isTomorrow = planDay === currentDay + 1;
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.id = `plan-day-${planDay}`;
+    btn.className = "day-tab" + (planDay === selectedPlanDay ? " selected" : "");
+    btn.setAttribute("role", "tab");
+    btn.setAttribute("aria-controls", "dayPlan");
+    btn.setAttribute("aria-selected", String(planDay === selectedPlanDay));
+    btn.innerHTML = `
+      <span class="day-tab-weekday"></span>
+      <strong></strong>
+      <span class="day-tab-state ${isTomorrow ? "draft" : "rough"}"></span>`;
+    btn.querySelector(".day-tab-weekday").textContent =
+      isTomorrow ? "Tomorrow" : date.toLocaleDateString("en-GB", {weekday:"short"});
+    btn.querySelector("strong").textContent =
+      date.toLocaleDateString("en-GB", {day:"numeric", month:"short"});
+    btn.querySelector(".day-tab-state").textContent = isTomorrow ? "◆ draft" : "○ rough";
+    btn.addEventListener("click", () => {
+      selectedPlanDay = planDay;
+      renderForecast(phases, currentDay);
+      $(`plan-day-${planDay}`).scrollIntoView({block:"nearest", inline:"center"});
+    });
+    strip.appendChild(btn);
+  }
+
+  const selectedDate = dateForPlanDay(selectedPlanDay);
+  const phase = phases.find(p =>
+    selectedPlanDay >= Number(p.startDay) && selectedPlanDay <= Number(p.endDay));
+  if (selectedPlanDay === currentDay + 1){
+    renderTomorrowPlan(panel, selectedDate, selectedPlanDay);
+  } else {
+    renderRoughPlan(panel, selectedDate, selectedPlanDay, phase);
+  }
+  panel.setAttribute("aria-labelledby", `plan-day-${selectedPlanDay}`);
+}
+
+function dateForPlanDay(planDay){
+  const date = new Date(state().startDate + "T12:00:00");
+  date.setDate(date.getDate() + planDay - 1);
+  return date;
+}
+
+function fullPlanDate(date){
+  return date.toLocaleDateString("en-GB", {
+    weekday:"long", day:"numeric", month:"long"
+  });
+}
+
+function renderTomorrowPlan(panel, date, planDay){
+  const preview = String(state().tomorrowPreview || "").trim();
+  panel.className = "day-plan tomorrow";
+  panel.innerHTML = `
+    <div class="day-plan-top">
+      <div>
+        <div class="plan-state draft">◆ Draft for tomorrow</div>
+        <h2></h2>
+        <p class="plan-context">Built from today's evidence so far. Logs and the debrief can still change the order, minutes and passages.</p>
+      </div>
+      <div class="plan-day-number"></div>
+    </div>
+    <div class="tomorrow-body"></div>`;
+  panel.querySelector("h2").textContent = fullPlanDate(date);
+  panel.querySelector(".plan-day-number").textContent = `Day ${planDay}`;
+  const body = panel.querySelector(".tomorrow-body");
+  if (!preview){
+    body.innerHTML = '<p class="forecast-empty">The coach has not drafted tomorrow yet. Debrief tonight to build it.</p>';
+    return;
+  }
+  appendTomorrowPreview(body, preview);
+}
+
+function appendTomorrowPreview(body, preview){
+  const chunks = preview.split(/\n\s*\n/).map(x => x.trim()).filter(Boolean);
+  chunks.forEach((chunk, index) => {
+    const lines = chunk.split(/\n+/).map(x => x.trim()).filter(Boolean);
+    if (!lines.length) return;
+    if (index === 0){
+      const intro = document.createElement("p");
+      intro.className = "tomorrow-intro";
+      intro.textContent = lines.join(" ");
+      body.appendChild(intro);
+      return;
+    }
+
+    const section = document.createElement("section");
+    section.className = "tomorrow-section";
+    const headingMatch = lines[0].match(/^([A-Z][A-Z\s]+)\s+[—-]\s+(.+)$/);
+    if (headingMatch){
+      const heading = document.createElement("h3");
+      heading.textContent = headingMatch[1].trim();
+      section.appendChild(heading);
+      const lead = document.createElement("p");
+      lead.className = "tomorrow-section-lead";
+      lead.textContent = headingMatch[2].trim();
+      section.appendChild(lead);
+    }
+
+    const items = headingMatch ? lines.slice(1) : lines;
+    const list = document.createElement("ul");
+    items.forEach(text => {
+      const li = document.createElement("li");
+      li.textContent = text;
+      list.appendChild(li);
+    });
+    section.appendChild(list);
+    body.appendChild(section);
+  });
+}
+
+function renderRoughPlan(panel, date, planDay, phase){
+  panel.className = "day-plan rough";
+  panel.innerHTML = `
+    <div class="day-plan-top">
+      <div>
+        <div class="plan-state rough">○ Rough phase snapshot</div>
+        <h2></h2>
+        <p class="plan-context">Direction only. The previous day's playing evidence will turn this into a timed, passage-specific plan.</p>
+      </div>
+      <div class="plan-day-number"></div>
+    </div>
+    <div class="rough-phase">
+      <div class="rough-phase-label"></div>
+      <p class="rough-headline"></p>
+    </div>
+    <section class="rough-targets">
+      <h3>Likely work</h3>
+      <ul></ul>
+    </section>`;
+  panel.querySelector("h2").textContent = fullPlanDate(date);
+  panel.querySelector(".plan-day-number").textContent = `Day ${planDay}`;
+
+  if (!phase){
+    panel.querySelector(".rough-phase-label").textContent = "Awaiting phase outline";
+    panel.querySelector(".rough-headline").textContent =
+      "This date has no phase detail in the current snapshot.";
+    panel.querySelector(".rough-targets").remove();
+    return;
+  }
+
+  panel.querySelector(".rough-phase-label").textContent =
+    `${phase.label || "Phase"} · ${phase.title}`;
+  panel.querySelector(".rough-headline").textContent = phase.headline || "";
+
+  const goals = (phase.goals || []).filter(goal => !String(goal).trim().startsWith("✓"));
+  const exactDay = new RegExp(`\\bDay\\s+${planDay}\\b`, "i");
+  goals.sort((a, b) => Number(exactDay.test(b)) - Number(exactDay.test(a)));
+  const list = panel.querySelector(".rough-targets ul");
+  goals.slice(0, 4).forEach(goal => {
+    const li = document.createElement("li");
+    li.textContent = goal;
+    list.appendChild(li);
+  });
+  if (!list.children.length){
+    const li = document.createElement("li");
+    li.textContent = "Protect the phase gains and use the next cold test to choose the work.";
+    list.appendChild(li);
+  }
+
+  const gate = phase.gate || {};
+  if (Number(gate.day) === planDay && (gate.criteria || []).length){
+    const callout = document.createElement("div");
+    callout.className = "plan-gate-callout";
+    const label = document.createElement("strong");
+    label.textContent = `◆ ${gate.label || "Gate day"}`;
+    const copy = document.createElement("span");
+    copy.textContent = "The coach will turn these criteria into tonight's checklist.";
+    callout.append(label, copy);
+    panel.querySelector(".rough-phase").after(callout);
+  }
 }
 
 function fillPlanList(list, items){
