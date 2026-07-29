@@ -58,6 +58,17 @@ main{width:100%;max-width:780px;margin:0 auto;padding:0 20px 48px;flex:1}
 .lede{color:var(--ink2);font-size:1.05rem;margin-top:8px;max-width:34em}
 .daybig{font-family:var(--serif);font-size:3.4rem;font-weight:700;line-height:1.05}
 .curtain{color:var(--amber);font-weight:600;font-size:1.05rem;margin-top:2px}
+.practice-time{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));max-width:410px;
+  margin:18px 0 12px;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+.practice-metric{padding:12px 18px 10px 0}
+.practice-metric + .practice-metric{border-left:1px solid var(--line);padding-left:18px}
+.practice-metric span{display:block;color:var(--mut);font-size:.72rem;font-weight:700;
+  letter-spacing:.08em;text-transform:uppercase}
+.practice-metric strong{display:block;color:var(--ink);font-family:var(--serif);
+  font-size:1.55rem;font-weight:600;line-height:1.25;font-variant-numeric:tabular-nums}
+.practice-remaining strong{color:var(--amber)}
+.practice-time small{grid-column:1/-1;color:var(--mut);font-size:.68rem;
+  padding:0 0 9px;letter-spacing:.02em}
 .dots{display:flex;gap:5px;flex-wrap:wrap;margin:16px 0 4px}
 .dots i{width:14px;height:14px;border-radius:4px;background:var(--track);display:block}
 .dots i.past{background:#3c4a40}

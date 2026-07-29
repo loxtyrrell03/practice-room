@@ -185,6 +185,46 @@ function dayInfo(){
   return { day, left, total: Math.round((recD - startD)/one) + 1 };
 }
 
+function isBreakBlock(block){
+  return String(block && block.id).startsWith("break");
+}
+
+function blockMinutes(block){
+  const mins = Number(block && block.mins);
+  return Number.isFinite(mins) && mins > 0 ? mins : 0;
+}
+
+function formatPracticeMinutes(mins){
+  const whole = Math.max(0, Math.ceil(mins));
+  const hours = Math.floor(whole / 60);
+  const rest = whole % 60;
+  if (!hours) return `${rest} min`;
+  return rest ? `${hours}h ${rest}m` : `${hours}h`;
+}
+
+function practiceTimeInfo(){
+  const practiceBlocks = (state().today.blocks || []).filter(b => !isBreakBlock(b));
+  const totalMins = practiceBlocks.reduce((sum, b) => sum + blockMinutes(b), 0);
+  let leftMins = practiceBlocks
+    .filter(b => !b.done)
+    .reduce((sum, b) => sum + blockMinutes(b), 0);
+
+  const active = timer && practiceBlocks.find(b => b.id === timer.blockId && !b.done);
+  if (active){
+    const activeMs = timer.paused ? timer.remainMs : timer.endsAt - Date.now();
+    leftMins += Math.max(0, activeMs) / 60000 - blockMinutes(active);
+  }
+  return {totalMins, leftMins};
+}
+
+function renderPracticeTime(){
+  const total = $("practiceTotal"), left = $("practiceLeft");
+  if (!total || !left) return;
+  const time = practiceTimeInfo();
+  total.textContent = formatPracticeMinutes(time.totalMins);
+  left.textContent = formatPracticeMinutes(time.leftMins);
+}
+
 function renderAll(){
   const broken = [];
   [["header", renderTop], ["today", renderToday], ["week plan", renderWeekPlan], ["programme", renderProgramme],
@@ -217,6 +257,7 @@ function renderToday(){
     dots.appendChild(el);
   }
   $("focus").textContent = s.today.focus || "";
+  renderPracticeTime();
 
   const gates = {7:"Gate day — run the Week 1 checklist with your coach tonight.",
                  14:"Gate day — Week 2 checklist tonight. Programme decisions get made on today's numbers.",
@@ -347,7 +388,7 @@ function renderBlockCard(wrap, b){
   {
     const card = document.createElement("div");
     const flag = FLAGS[b.flag] ? b.flag : null;
-    const isBreak = String(b.id).startsWith("break");
+    const isBreak = isBreakBlock(b);
     const isStudy = String(b.id).startsWith("score-study");
     const movementContext = blockMovementContext(b);
     card.className = "card block" + (b.done ? " done" : "") + (flag ? " f-" + flag : "") +
@@ -511,7 +552,7 @@ function renderFocus(){
   const bs = state().today.blocks || [];
   const b = bs[focusIdx];
   if (!b) return closeFocus();
-  const isBreak = String(b.id).startsWith("break");
+  const isBreak = isBreakBlock(b);
   const isStudy = String(b.id).startsWith("score-study");
   const movementContext = blockMovementContext(b);
   const undone = bs.filter(x => !x.done).length;
@@ -664,6 +705,7 @@ function tickTimer(){
     const bb = (st.today.blocks || []).find(x => x.id === timer.blockId);
     if (bb) paintTimerBtn(btn, bb);
   });
+  renderPracticeTime();
 }
 
 function fmtMs(ms){
