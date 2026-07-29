@@ -146,22 +146,43 @@ async function connect(){
   }
 }
 
+async function loadAll(){
+  const [st, ch, jr] = await Promise.all([
+    ghGet(FILES.state, {fresh:true}), ghGet(FILES.chat, {fresh:true}), ghGet(FILES.journal, {fresh:true}),
+  ]);
+  docs[FILES.state] = st; docs[FILES.chat] = ch; docs[FILES.journal] = jr;
+  try { docs[FILES.spots] = await ghGet(FILES.spots, {fresh:true}); } catch { docs[FILES.spots] = {obj:{spots:[]}, sha:null}; }
+  try { localStorage.setItem("pr-cache", JSON.stringify({
+    s: st.obj, c: ch.obj, j: jr.obj, sp: docs[FILES.spots].obj })); } catch {}
+}
+
+function showApp(){
+  $("view-setup").hidden = true; $("tabs").hidden = false;
+  renderAll();
+  switchView(currentView);
+}
+
 async function start(){
   banner("");
-  try {
-    const [st, ch, jr] = await Promise.all([
-      ghGet(FILES.state, {fresh:true}), ghGet(FILES.chat, {fresh:true}), ghGet(FILES.journal, {fresh:true}),
-    ]);
-    docs[FILES.state] = st; docs[FILES.chat] = ch; docs[FILES.journal] = jr;
-    try { docs[FILES.spots] = await ghGet(FILES.spots, {fresh:true}); } catch { docs[FILES.spots] = {obj:{spots:[]}, sha:null}; }
-    $("view-setup").hidden = true; $("tabs").hidden = false;
-    renderAll();
-    switchView(currentView);
-  } catch (e) {
-    if (!cfg || !cfg.token) return showSetup();
-    banner(e.message + " — check the connection.", true);
-    showSetup();
-    $("setupGo").disabled = false; $("setupGo").textContent = "Open the practice room";
+  let lastErr = null;
+  for (let i = 0; i < 3; i++){
+    try { await loadAll(); return showApp(); }
+    catch (e){ lastErr = e; await new Promise(r => setTimeout(r, 1200 * (i + 1))); }
+  }
+  if (!cfg || !cfg.token) return showSetup();
+  // Configured browser: NEVER bounce to the connect screen. Use cached data.
+  let cached = null;
+  try { cached = JSON.parse(localStorage.getItem("pr-cache")); } catch {}
+  if (cached){
+    docs[FILES.state]   = { obj: cached.s,  sha: null };
+    docs[FILES.chat]    = { obj: cached.c,  sha: null };
+    docs[FILES.journal] = { obj: cached.j,  sha: null };
+    docs[FILES.spots]   = { obj: cached.sp || {spots:[]}, sha: null };
+    showApp();
+    banner(`Can't reach GitHub right now (${lastErr.message}) — showing your last-loaded data. Tap refresh to retry.`, true);
+  } else {
+    $("tabs").hidden = false;
+    banner(`${lastErr.message} — tap refresh to retry. Your connection is still saved; if the token truly expired, use disconnect (bottom right) and re-pair.`, true);
   }
 }
 
