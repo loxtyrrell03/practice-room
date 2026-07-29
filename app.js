@@ -80,6 +80,14 @@ window.addEventListener("DOMContentLoaded", async () => {
     $("resetBtn").hidden = true;
     return start();
   }
+  const h = new URLSearchParams(location.hash.slice(1));
+  if (h.get("t")){
+    cfg = { name: h.get("n") || "you", token: h.get("t"),
+            owner: h.get("o") || "loxtyrrell03", repo: h.get("r") || "practice-room-data" };
+    localStorage.setItem(LS_KEY, JSON.stringify(cfg));
+    history.replaceState(null, "", location.pathname + location.search);
+    return start();
+  }
   try { cfg = JSON.parse(localStorage.getItem(LS_KEY)); } catch {}
   if (cfg && cfg.token) start(); else showSetup();
 });
@@ -106,6 +114,9 @@ function wireChrome(){
   document.querySelectorAll(".chip.q").forEach(c =>
     c.addEventListener("click", () => { $("input").value = c.dataset.q; $("input").focus(); }));
   $("memBtn").addEventListener("click", toggleMemory);
+  $("weekPill").addEventListener("click", () => {
+    const w = $("weekPanel"); w.hidden = !w.hidden;
+  });
   window.addEventListener("focus", () => { if (cfg && cfg.token && !pollTimer) refreshQuiet(); });
 }
 
@@ -216,6 +227,20 @@ function renderToday(){
     dots.appendChild(el);
   }
   $("focus").textContent = s.today.focus || "";
+
+  const w = s.week;
+  $("weekPill").hidden = !w;
+  if (w){
+    $("weekPill").textContent = `Week ${w.num} — ${w.title} · this week's plan`;
+    const wp = $("weekPanel");
+    wp.innerHTML = `<h2></h2><p class="headline"></p>
+      <div class="w-head">This week</div><ul class="w-goals"></ul>
+      <div class="w-head">Pass the week if</div><ul class="w-gate"></ul>`;
+    wp.querySelector("h2").textContent = `Week ${w.num} — ${w.title} (${w.dates})`;
+    wp.querySelector(".headline").textContent = w.headline || "";
+    (w.goals || []).forEach(g => { const li = document.createElement("li"); li.textContent = g; wp.querySelector(".w-goals").appendChild(li); });
+    (w.gate || []).forEach(g => { const li = document.createElement("li"); li.textContent = g; wp.querySelector(".w-gate").appendChild(li); });
+  }
 
   const gates = {7:"Gate day — run the Week 1 checklist with your coach tonight.",
                  14:"Gate day — Week 2 checklist tonight. Programme decisions get made on today's numbers.",

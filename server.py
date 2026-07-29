@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Practice Room — local server. Zero auth: serves the site, reads/writes the
-data repo on disk, runs the coach via your already-logged-in Claude CLI, and
-best-effort syncs to GitHub in the background."""
+data repo on disk, runs the coach via your logged-in Claude CLI, syncs to
+GitHub in the background, picks up messages sent from your phone, and pairs
+your phone via QR (/pair) so the hosted site works anywhere."""
 import json, os, shutil, subprocess, threading, time, webbrowser
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
@@ -11,6 +12,7 @@ HERE = Path(__file__).resolve().parent
 DATA = HERE / "data-repo"
 PORT = 8977
 MODEL = os.environ.get("COACH_MODEL", "claude-fable-5")
+HOSTED = "https://loxtyrrell03.github.io/practice-room/"
 
 coach_lock = threading.Lock()
 coach_running = False
@@ -20,17 +22,18 @@ def log(msg): print(f"[practice-room] {msg}", flush=True)
 def git(repo, *args):
     try:
         r = subprocess.run(["git", "-C", str(repo), *args],
-                           capture_output=True, text=True, timeout=60)
+                           capture_output=True, text=True, timeout=90)
         return r.returncode == 0, (r.stdout + r.stderr).strip()
     except Exception as e:
         return False, str(e)
 
 def sync_push(reason):
-    ok, _ = git(DATA, "add", "-A")
-    changed, out = git(DATA, "diff", "--cached", "--quiet")
-    if changed:  # diff --quiet rc=0 means NO changes
+    git(DATA, "add", "-A")
+    changed, _ = git(DATA, "diff", "--cached", "--quiet")
+    if changed:  # rc=0 → no changes staged
         return
     git(DATA, "commit", "-m", f"[local] {reason}")
+    git(DATA, "pull", "--rebase")
     ok, out = git(DATA, "push")
     log(f"synced ({reason})" if ok else f"push failed (offline is fine): {out[:120]}")
 
@@ -39,6 +42,13 @@ def safe_path(rel):
     if not str(p).startswith(str(DATA.resolve())):
         raise ValueError("bad path")
     return p
+
+def chat_last_role():
+    try:
+        doc = json.loads(safe_path("data/chat.json").read_text(encoding="utf-8"))
+        return doc["messages"][-1]["role"] if doc["messages"] else "coach"
+    except Exception:
+        return "coach"
 
 def run_coach():
     global coach_running
@@ -51,7 +61,7 @@ def run_coach():
         claude = shutil.which("claude") or "claude"
         base = [claude, "-p", "--allowedTools", "Read,Write,Edit,Glob,Grep",
                 "--permission-mode", "acceptEdits", "--max-turns", "40"]
-        for attempt, extra in enumerate((["--model", MODEL], [])):
+        for extra in (["--model", MODEL], []):
             log(f"coach thinking… (model: {extra[1] if extra else 'default'})")
             with open(prompt_file, "r", encoding="utf-8") as f:
                 r = subprocess.run(base + extra, stdin=f, cwd=str(DATA),
@@ -62,8 +72,8 @@ def run_coach():
                 break
             log(f"coach run failed (rc={r.returncode}): {(r.stderr or r.stdout)[:200]}")
         else:
-            _append_coach_error("The coach couldn't run — check the server window for the error "
-                                "(is the Claude CLI logged in? try `claude` once in a terminal).")
+            _append_coach_error("The coach couldn't run — check the server window "
+                                "(is the Claude CLI logged in? run `claude` once in a terminal).")
         sync_push("coach session")
     except Exception as e:
         log(f"coach error: {e}")
@@ -75,16 +85,39 @@ def _append_coach_error(text):
     try:
         p = safe_path("data/chat.json")
         doc = json.loads(p.read_text(encoding="utf-8"))
-        doc["messages"].append({"role": "coach", "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "text": text})
+        doc["messages"].append({"role": "coach",
+                                "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                                "text": text})
         p.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
     except Exception:
         pass
+
+PAIR_HTML = """<!DOCTYPE html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pair your phone</title>
+<style>body{{font-family:system-ui;background:#101613;color:#f4f1e8;display:flex;
+flex-direction:column;align-items:center;padding:40px 20px;gap:18px;text-align:center}}
+#qr{{background:#fff;padding:14px;border-radius:12px}}
+a{{color:#e2a94f;word-break:break-all;font-size:.85rem}}
+p{{max-width:34em;color:#c9c5b6}}
+button{{background:#e2a94f;border:none;border-radius:10px;padding:12px 22px;
+font-weight:700;cursor:pointer}}</style></head><body>
+<h1>Pair your phone</h1>
+<p>Scan with your phone camera. It opens the hosted Practice Room already signed
+in — nothing to type. The link contains your GitHub access, so don't share it.</p>
+<div id="qr"></div>
+<button onclick="navigator.clipboard.writeText(LINK).then(()=>this.textContent='Copied!')">Copy link instead</button>
+<a id="fallback" href="{link}">{link}</a>
+<script>const LINK={link_js};</script>
+<script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"
+onload="new QRCode(document.getElementById('qr'),{{text:LINK,width:240,height:240}});document.getElementById('fallback').style.display='none'"></script>
+</body></html>"""
 
 class Handler(SimpleHTTPRequestHandler):
     def __init__(self, *a, **kw):
         super().__init__(*a, directory=str(HERE), **kw)
 
-    def log_message(self, *a):  # quiet
+    def log_message(self, *a):
         pass
 
     def _json(self, code, obj):
@@ -105,12 +138,32 @@ class Handler(SimpleHTTPRequestHandler):
         if u.path == "/api/file":
             rel = parse_qs(u.query).get("path", [""])[0]
             try:
-                p = safe_path(rel)
-                return self._json(200, {"content": p.read_text(encoding="utf-8")})
+                return self._json(200, {"content": safe_path(rel).read_text(encoding="utf-8")})
             except FileNotFoundError:
                 return self._json(404, {"error": f"missing {rel}"})
             except Exception as e:
                 return self._json(400, {"error": str(e)})
+        if u.path == "/pair":
+            try:
+                r = subprocess.run(["gh", "auth", "token"], capture_output=True,
+                                   text=True, timeout=20, shell=(os.name == "nt"))
+                tok = r.stdout.strip()
+                if r.returncode != 0 or not tok:
+                    raise RuntimeError(r.stderr.strip() or "gh auth token failed")
+                ok, name = git(DATA, "config", "user.name")
+                first = name.split()[0] if ok and name else "you"
+                link = f"{HOSTED}#t={tok}&o=loxtyrrell03&r=practice-room-data&n={first}"
+                html = PAIR_HTML.format(link=link, link_js=json.dumps(link))
+                body = html.encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+            except Exception as e:
+                self._json(500, {"error": f"pairing failed: {e}"})
+            return
         return super().do_GET()
 
     def do_POST(self):
@@ -147,14 +200,18 @@ class Handler(SimpleHTTPRequestHandler):
 
         return self._json(404, {"error": "unknown endpoint"})
 
-def periodic_sync():
+def background_loop():
+    """Every 60 s: pull; if a message arrived from the phone (hosted site),
+    answer it locally; otherwise push any local changes."""
     while True:
-        time.sleep(120)
+        time.sleep(60)
         try:
-            chat = json.loads(safe_path("data/chat.json").read_text(encoding="utf-8"))
-            if chat["messages"] and chat["messages"][-1]["role"] == "user":
-                continue  # don't push a pending question (Actions would double-reply)
-            sync_push("autosave")
+            git(DATA, "pull", "--rebase")
+            if chat_last_role() == "user" and not coach_running:
+                log("picked up a message from the hosted site — answering locally.")
+                threading.Thread(target=run_coach, daemon=True).start()
+            elif chat_last_role() != "user":
+                sync_push("autosave")
         except Exception:
             pass
 
@@ -164,12 +221,14 @@ def main():
         return
     log("pulling latest…")
     git(HERE, "pull", "--rebase"); git(DATA, "pull", "--rebase")
-    threading.Thread(target=periodic_sync, daemon=True).start()
-    log(f"Practice Room → http://localhost:{PORT}  (leave this window open)")
-    try:
-        webbrowser.open(f"http://localhost:{PORT}")
-    except Exception:
-        pass
+    threading.Thread(target=background_loop, daemon=True).start()
+    log(f"Practice Room → http://localhost:{PORT}")
+    log(f"Pair your phone → http://localhost:{PORT}/pair")
+    if not os.environ.get("BROWSER_NONE"):
+        try:
+            webbrowser.open(f"http://localhost:{PORT}")
+        except Exception:
+            pass
     ThreadingHTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
 
 if __name__ == "__main__":
