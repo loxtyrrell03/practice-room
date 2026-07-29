@@ -104,6 +104,15 @@ main{width:100%;max-width:780px;margin:0 auto;padding:0 20px 48px;flex:1}
 .p-row b{color:var(--ink)}
 .p-note{color:var(--ink2);font-size:.95rem;margin-top:10px}
 
+.spots{margin-top:12px;display:flex;flex-direction:column;gap:6px}
+.spot{display:flex;gap:10px;align-items:baseline;font-size:.88rem;color:var(--ink2);
+  background:var(--card2);border:1px solid var(--line);border-radius:10px;padding:7px 12px}
+.spot .s-bars{font-weight:700;color:#eda28d;white-space:nowrap}
+.spot.watching .s-bars{color:#ecc788}
+.spot .s-issue{flex:1}
+.spot .s-meta{color:var(--mut);font-size:.78rem;white-space:nowrap}
+.spot.fixedcount{color:#8fd2a4;background:none;border-style:dashed}
+
 /* coach */
 .chat-wrap{display:flex;flex-direction:column;min-height:60vh}
 .chat-tools{text-align:right;padding:6px 0}

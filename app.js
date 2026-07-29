@@ -2,7 +2,7 @@
 "use strict";
 
 const LS_KEY = "practice-room-config";
-const FILES = { state:"data/state.json", chat:"data/chat.json", journal:"data/journal.json", memory:"memory/MEMORY.md" };
+const FILES = { state:"data/state.json", chat:"data/chat.json", journal:"data/journal.json", memory:"memory/MEMORY.md", spots:"data/spots.json" };
 const $ = (id) => document.getElementById(id);
 const LOCAL = ["localhost","127.0.0.1"].includes(location.hostname);
 
@@ -142,6 +142,7 @@ async function start(){
       ghGet(FILES.state, {fresh:true}), ghGet(FILES.chat, {fresh:true}), ghGet(FILES.journal, {fresh:true}),
     ]);
     docs[FILES.state] = st; docs[FILES.chat] = ch; docs[FILES.journal] = jr;
+    try { docs[FILES.spots] = await ghGet(FILES.spots, {fresh:true}); } catch { docs[FILES.spots] = {obj:{spots:[]}, sha:null}; }
     $("view-setup").hidden = true; $("tabs").hidden = false;
     renderAll();
     switchView(currentView);
@@ -159,6 +160,7 @@ async function refreshQuiet(){
       ghGet(FILES.state, {fresh:true}), ghGet(FILES.chat, {fresh:true}), ghGet(FILES.journal, {fresh:true}),
     ]);
     docs[FILES.state] = st; docs[FILES.chat] = ch; docs[FILES.journal] = jr;
+    try { docs[FILES.spots] = await ghGet(FILES.spots, {fresh:true}); } catch {}
     renderAll();
   } catch {}
 }
@@ -400,9 +402,28 @@ function renderProgramme(){
         <span>reliable tempo <b>${p.tempoPct}%</b> of target</span>
         <span>cold test: <b>${lastCold}</b></span>
       </div>
-      <p class="p-note"></p>`;
+      <p class="p-note"></p><div class="spots"></div>`;
     div.querySelector("h2").textContent = p.title;
     div.querySelector(".p-note").textContent = p.note || "";
+    const spotBox = div.querySelector(".spots");
+    const all = ((docs[FILES.spots] || {obj:{spots:[]}}).obj.spots || []).filter(sp => sp.piece === p.id);
+    const open = all.filter(sp => sp.status !== "fixed");
+    const fixed = all.length - open.length;
+    open.forEach(sp => {
+      const row = document.createElement("div");
+      row.className = "spot" + (sp.status === "watching" ? " watching" : "");
+      row.innerHTML = `<span class="s-bars"></span><span class="s-issue"></span><span class="s-meta"></span>`;
+      row.querySelector(".s-bars").textContent = "b." + sp.bars;
+      row.querySelector(".s-issue").textContent = sp.issue;
+      row.querySelector(".s-meta").textContent = (sp.status === "watching" ? "◆ watching · " : "✕ open · ") + sp.logged;
+      spotBox.appendChild(row);
+    });
+    if (fixed > 0){
+      const row = document.createElement("div");
+      row.className = "spot fixedcount";
+      row.textContent = `✓ ${fixed} fixed`;
+      spotBox.appendChild(row);
+    }
     wrap.appendChild(div);
   });
 }
