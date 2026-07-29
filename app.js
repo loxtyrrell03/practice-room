@@ -238,7 +238,18 @@ function dayInfo(){
   return { day, left, total: Math.round((recD - startD)/one) + 1 };
 }
 
-function renderAll(){ renderTop(); renderToday(); renderProgramme(); renderCoach(); renderJournal(); }
+function renderAll(){
+  const broken = [];
+  [["header", renderTop], ["today", renderToday], ["programme", renderProgramme],
+   ["coach", renderCoach], ["journal", renderJournal]].forEach(([name, fn]) => {
+    try { fn(); } catch (e){ broken.push(`${name}: ${e.message}`); }
+  });
+  try {
+    const n = (state().today.blocks || []).length;
+    $("footLeft").textContent = `Practice Room · loaded ${new Date().toLocaleTimeString()} · ${n} blocks today`;
+  } catch {}
+  if (broken.length) banner("Display error (data is intact) — " + broken.join(" · "), true);
+}
 
 function renderTop(){
   const {day, left} = dayInfo();
@@ -295,6 +306,18 @@ function renderToday(){
   // blocks
   const wrap = $("blocks"); wrap.innerHTML = "";
   (s.today.blocks || []).forEach(b => {
+    try { renderBlockCard(wrap, b); }
+    catch (e){
+      const c = document.createElement("div");
+      c.className = "card block";
+      c.textContent = (b && b.title ? b.title : "block") + " — display error: " + e.message;
+      wrap.appendChild(c);
+    }
+  });
+}
+
+function renderBlockCard(wrap, b){
+  {
     const card = document.createElement("div");
     const flag = FLAGS[b.flag] ? b.flag : null;
     const isBreak = String(b.id).startsWith("break");
@@ -325,7 +348,7 @@ function renderToday(){
     });
     wireTimerButton(card.querySelector(".timerbtn"), b);
     wrap.appendChild(card);
-  });
+  }
 }
 
 const NOTEBAR_HTML = '<div class="notebar"><input type="text" placeholder="Log it: e.g. RH too loud b.57" maxlength="300"><button class="notebtn">log</button></div><div class="obslist"></div>';
