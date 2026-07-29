@@ -43,6 +43,9 @@ MODEL = os.environ.get("COACH_MODEL", "claude-opus-5")
 os.environ.setdefault("MAX_THINKING_TOKENS", "10000")  # medium reasoning
 PHONE_URL = "https://lox.tail89d19b.ts.net:10000/"
 SESSION_FILE = HERE / ".coach-session.json"
+WINDOWLESS_SUBPROCESS_FLAGS = (
+    subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+)
 
 # Storage writes, whole coach transactions, and the CLI itself have different
 # lock scopes. Practice notes remain immediately saveable while Claude works.
@@ -93,6 +96,7 @@ def git(repo, *args):
             capture_output=True,
             text=True,
             timeout=90,
+            creationflags=WINDOWLESS_SUBPROCESS_FLAGS,
         )
         return result.returncode == 0, (result.stdout + result.stderr).strip()
     except Exception as exc:
@@ -199,6 +203,7 @@ def run_claude(repo, prompt, source):
                 text=True,
                 timeout=900,
                 shell=(os.name == "nt"),
+                creationflags=WINDOWLESS_SUBPROCESS_FLAGS,
             )
             if result.returncode == 0:
                 new_session = None
