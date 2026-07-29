@@ -108,7 +108,7 @@ main{width:100%;max-width:780px;margin:0 auto;padding:0 20px 48px;flex:1}
 .block h2{margin-bottom:2px}
 .movement-label{color:var(--amber);font-size:.7rem;font-weight:750;letter-spacing:.09em;
   line-height:1.3;text-transform:uppercase;margin-bottom:4px}
-.block .detail{color:var(--ink2);font-size:.97rem;margin-top:6px}
+.block .detail{color:var(--ink2);font-size:.97rem;line-height:1.55;margin-top:6px}
 .block .whybtn{margin-top:10px}
 
 .block.studyblk{border-left:3px solid var(--amber)}
@@ -252,6 +252,16 @@ body.focusing{overflow:hidden}
 .plan-block-mins{color:var(--mut);font-size:.72rem;white-space:nowrap}
 .plan-block-detail{color:var(--ink2);font-size:.84rem;line-height:1.58;margin-top:5px}
 .plan-block.break .plan-block-heading h3,.plan-block.break .plan-block-detail{color:var(--mut)}
+.instruction-list{list-style:none;display:flex;flex-direction:column;gap:9px;
+  margin:8px 0 0;padding:0}
+.instruction-list li{position:relative;padding-left:16px;color:var(--ink2);
+  line-height:1.52}
+.instruction-list li::before{content:"";position:absolute;left:0;top:.67em;
+  width:5px;height:5px;border-radius:50%;background:var(--amber)}
+.instruction-list strong{color:var(--ink);font-weight:750}
+.instruction-list strong::after{content:" — ";color:var(--mut);font-weight:400}
+.instruction-list span{color:inherit}
+.plan-block.break .instruction-list strong{color:var(--ink2)}
 .plan-log-refs{margin-top:12px;padding:10px 0 2px 14px;border-left:2px solid rgba(226,169,79,.55)}
 .plan-log-refs strong{display:block;color:var(--amber);font-size:.64rem;font-weight:750;
   letter-spacing:.08em;text-transform:uppercase;margin-bottom:5px}

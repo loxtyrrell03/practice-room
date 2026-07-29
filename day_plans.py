@@ -91,6 +91,8 @@ def validate_day_plans(document: dict) -> None:
             raise DayPlanError(f"invalid plan status for {plan['date']}")
         if status in {"ready", "active"}:
             _validate_ready_plan(plan)
+        elif status == "rough":
+            _validate_rough_plan(plan)
 
 
 def _validate_ready_plan(plan: dict) -> None:
@@ -110,11 +112,33 @@ def _validate_ready_plan(plan: dict) -> None:
             raise DayPlanError(f"future block {block['id']} must have done:false")
         if not isinstance(block.get("mins"), (int, float)) or block["mins"] <= 0:
             raise DayPlanError(f"future block {block['id']} needs positive minutes")
-        minimum_detail = 10 if str(block["id"]).startswith("break") else 40
-        if len(str(block.get("detail") or "").strip()) < minimum_detail:
-            raise DayPlanError(
-                f"future block {block['id']} needs passage-specific instructions"
-            )
+        is_break = str(block["id"]).startswith("break")
+        _validate_instruction_steps(
+            block.get("steps"),
+            label=f"future block {block['id']}",
+            minimum=1 if is_break else 2,
+            maximum=3 if is_break else 6,
+        )
+        if not is_break:
+            leads = [str(step["lead"]).strip() for step in block["steps"]]
+            if not any(
+                re.match(
+                    r"^\d+(?:[–-]\d+)?\s*"
+                    r"(?:min|mins|minutes|reps|pass|passes|runs)\s*·\s*\S",
+                    lead,
+                    re.IGNORECASE,
+                )
+                for lead in leads
+            ):
+                raise DayPlanError(
+                    f"future block {block['id']} needs a bold duration/reps "
+                    "and technique lead"
+                )
+            if not leads[-1].lower().startswith(("pass when", "stop when")):
+                raise DayPlanError(
+                    f"future block {block['id']} must end with a Pass when "
+                    "or Stop when step"
+                )
         for reference in block.get("logRefs") or []:
             if not isinstance(reference, dict) or not reference.get("observationId"):
                 raise DayPlanError(f"block {block['id']} has an invalid log reference")
@@ -129,6 +153,44 @@ def _validate_ready_plan(plan: dict) -> None:
             raise DayPlanError(
                 f"deferred log in {plan['date']} needs a target date and reason"
             )
+
+
+def _validate_instruction_steps(
+    steps,
+    *,
+    label: str,
+    minimum: int,
+    maximum: int,
+) -> None:
+    if not isinstance(steps, list) or not minimum <= len(steps) <= maximum:
+        raise DayPlanError(
+            f"{label} needs {minimum}–{maximum} short instruction bullets"
+        )
+    for index, step in enumerate(steps, start=1):
+        if not isinstance(step, dict):
+            raise DayPlanError(f"{label} step {index} must be an object")
+        lead = str(step.get("lead") or "").strip()
+        text = str(step.get("text") or "").strip()
+        if not 2 <= len(lead) <= 60:
+            raise DayPlanError(f"{label} step {index} needs a short bold lead")
+        if not 5 <= len(text) <= 240:
+            raise DayPlanError(
+                f"{label} step {index} needs concise plain-language instructions"
+            )
+
+
+def _validate_rough_plan(plan: dict) -> None:
+    if "preview" in plan:
+        raise DayPlanError(
+            f"rough plan {plan['date']} must use outline bullets, not preview prose"
+        )
+    if plan.get("outline") is not None:
+        _validate_instruction_steps(
+            plan["outline"],
+            label=f"rough plan {plan['date']}",
+            minimum=2,
+            maximum=6,
+        )
 
 
 def accounted_observation_ids(plan: dict) -> list[str]:

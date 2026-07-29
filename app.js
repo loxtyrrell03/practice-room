@@ -482,7 +482,9 @@ function renderForecast(phases, currentDay){
   } else if (selectedPlanDay === currentDay + 1){
     renderTomorrowPlan(panel, selectedDate, selectedPlanDay);
   } else {
-    renderRoughPlan(panel, selectedDate, selectedPlanDay, phase);
+    renderRoughPlan(
+      panel, selectedDate, selectedPlanDay, phase, selectedDatedPlan
+    );
   }
   panel.setAttribute("aria-labelledby", `plan-day-${selectedPlanDay}`);
 }
@@ -579,7 +581,7 @@ function renderPlanSchedule(root, blocks, {compact=false} = {}){
           <h3></h3>
           <span class="plan-block-mins"></span>
         </div>
-        <p class="plan-block-detail"></p>
+        <div class="plan-block-detail"></div>
         <div class="plan-log-refs" hidden>
           <strong>From today</strong>
           <ul></ul>
@@ -590,9 +592,13 @@ function renderPlanSchedule(root, blocks, {compact=false} = {}){
     row.querySelector("h3").textContent = block.title || "Untitled block";
     row.querySelector(".plan-block-mins").textContent = `${block.mins} min`;
     const detail = row.querySelector(".plan-block-detail");
-    detail.textContent = compact && !isBreak
-      ? (block.done ? "Completed on this date." : "Still ahead on this date.")
-      : block.detail || "";
+    if (compact && !isBreak){
+      detail.textContent = block.done
+        ? "Completed on this date."
+        : "Still ahead on this date.";
+    } else {
+      renderBlockInstructions(detail, block);
+    }
     const references = block.logRefs || [];
     if (references.length){
       const evidence = row.querySelector(".plan-log-refs");
@@ -606,6 +612,33 @@ function renderPlanSchedule(root, blocks, {compact=false} = {}){
     }
     root.appendChild(row);
   });
+}
+
+function renderBlockInstructions(root, block){
+  const steps = Array.isArray(block.steps)
+    ? block.steps.filter(step => step && step.lead && step.text)
+    : [];
+  if (!steps.length){
+    root.textContent = block.detail || "";
+    return;
+  }
+  renderInstructionSteps(root, steps);
+}
+
+function renderInstructionSteps(root, steps){
+  root.innerHTML = "";
+  const list = document.createElement("ul");
+  list.className = "instruction-list";
+  steps.forEach(step => {
+    const item = document.createElement("li");
+    const lead = document.createElement("strong");
+    lead.textContent = step.lead;
+    const text = document.createElement("span");
+    text.textContent = step.text;
+    item.append(lead, text);
+    list.appendChild(item);
+  });
+  root.appendChild(list);
 }
 
 function renderDeferredLogs(panel, deferredLogs){
@@ -686,7 +719,7 @@ function appendTomorrowPreview(body, preview){
   });
 }
 
-function renderRoughPlan(panel, date, planDay, phase){
+function renderRoughPlan(panel, date, planDay, phase, plan=null){
   panel.className = "day-plan rough";
   panel.innerHTML = `
     <div class="day-plan-top">
@@ -700,33 +733,44 @@ function renderRoughPlan(panel, date, planDay, phase){
     </div>
     <section class="rough-targets">
       <h3>Current outline</h3>
-      <ul></ul>
+      <div class="rough-target-list"></div>
     </section>`;
   panel.querySelector("h2").textContent = fullPlanDate(date);
   panel.querySelector(".plan-day-number").textContent = `Day ${planDay}`;
+  const targetRoot = panel.querySelector(".rough-target-list");
+  const outline = Array.isArray((plan || {}).outline) ? plan.outline : [];
 
   if (!phase){
-    panel.querySelector(".rough-phase-label").textContent = "No outline yet";
-    panel.querySelector(".rough-targets").remove();
+    panel.querySelector(".rough-phase-label").textContent =
+      outline.length ? "Outline" : "No outline yet";
+    if (outline.length) renderInstructionSteps(targetRoot, outline);
+    else panel.querySelector(".rough-targets").remove();
     return;
   }
 
   panel.querySelector(".rough-phase-label").textContent =
     phase.title;
 
-  const goals = (phase.goals || []).filter(goal => !String(goal).trim().startsWith("✓"));
-  const exactDay = new RegExp(`\\bDay\\s+${planDay}\\b`, "i");
-  goals.sort((a, b) => Number(exactDay.test(b)) - Number(exactDay.test(a)));
-  const list = panel.querySelector(".rough-targets ul");
-  goals.slice(0, 4).forEach(goal => {
-    const li = document.createElement("li");
-    li.textContent = goal;
-    list.appendChild(li);
-  });
-  if (!list.children.length){
-    const li = document.createElement("li");
-    li.textContent = "Protect the phase gains and use the next cold test to choose the work.";
-    list.appendChild(li);
+  if (outline.length){
+    renderInstructionSteps(targetRoot, outline);
+  } else {
+    const goals = (phase.goals || [])
+      .filter(goal => !String(goal).trim().startsWith("✓"));
+    const exactDay = new RegExp(`\\bDay\\s+${planDay}\\b`, "i");
+    goals.sort((a, b) => Number(exactDay.test(b)) - Number(exactDay.test(a)));
+    const list = document.createElement("ul");
+    targetRoot.appendChild(list);
+    goals.slice(0, 4).forEach(goal => {
+      const li = document.createElement("li");
+      li.textContent = goal;
+      list.appendChild(li);
+    });
+    if (!list.children.length){
+      const li = document.createElement("li");
+      li.textContent =
+        "Protect the phase gains and use the next cold test to choose the work.";
+      list.appendChild(li);
+    }
   }
 
   const gate = phase.gate || {};
@@ -766,7 +810,7 @@ function renderBlockCard(wrap, b){
         <div class="card-head"><h2></h2>
           <span class="head-right">${flag ? `<span class="ftag f-${flag}">${FLAGS[flag]}</span>` : ""}${isStudy ? '<span class="block-mode">off bench</span>' : ""}<span class="mins">${b.mins} min</span></span>
         </div>
-        <p class="detail"></p>
+        <div class="detail"></div>
         <div class="b-actions">
           <button class="timerbtn" data-block="${b.id}"></button>
           ${isBreak ? "" : '<button class="whybtn">why this? →</button><button class="whybtn focuslink">focus →</button>'}
@@ -775,7 +819,7 @@ function renderBlockCard(wrap, b){
       </div>`;
     if (movementContext) card.querySelector(".movement-label").textContent = movementContext;
     card.querySelector("h2").textContent = b.title;
-    card.querySelector(".detail").textContent = b.detail;
+    renderBlockInstructions(card.querySelector(".detail"), b);
     card.querySelector(".tick").addEventListener("click", () => toggleBlock(b.id));
     const fl = card.querySelector(".focuslink");
     if (fl) fl.addEventListener("click", () => openFocus(b.id));
@@ -941,7 +985,7 @@ function renderFocus(){
   </div>`;
   if (movementContext) ov.querySelector(".movement-label").textContent = movementContext;
   ov.querySelector(".f-title").textContent = b.title;
-  ov.querySelector(".f-detail").textContent = b.detail || "";
+  renderBlockInstructions(ov.querySelector(".f-detail"), b);
   if (b.why) ov.querySelector(".f-why").textContent = b.why;
   wireTimerButton(ov.querySelector(".timerbtn"), b);
   wireNotebar(ov, b);

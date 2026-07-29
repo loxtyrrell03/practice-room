@@ -27,10 +27,19 @@ def ready_plan(date="2026-07-30"):
                 "mins": 10,
                 "flag": "urgent",
                 "done": False,
-                "detail": (
-                    "Single voice at 40–50%, six repetitions, release on the "
-                    "substitution, then verify once cold."
-                ),
+                "steps": [
+                    {
+                        "lead": "6 reps · Single-voice repair",
+                        "text": (
+                            "Play b.16 at 40–50%; release the substitution "
+                            "without tightening."
+                        ),
+                    },
+                    {
+                        "lead": "Pass when",
+                        "text": "One cold repeat stays loose and rhythmically even.",
+                    },
+                ],
                 "why": "The logged tension is local to the finger change.",
                 "logRefs": [
                     {
@@ -89,6 +98,70 @@ class DayPlanTests(unittest.TestCase):
                     "routeObservationIds": ["obs-1"],
                     "reviewObservationIds": ["obs-2"],
                 },
+            )
+
+    def test_ready_plan_rejects_paragraph_instead_of_bullets(self):
+        plan = ready_plan()
+        block = plan["blocks"][0]
+        block.pop("steps")
+        block["detail"] = (
+            "Single voice at 40–50%, six repetitions, release on the "
+            "substitution, then verify once cold."
+        )
+        with self.assertRaisesRegex(DayPlanError, "instruction bullets"):
+            validate_coach_day_change(
+                before_state={
+                    "today": {"date": "2026-07-29", "focus": "", "blocks": []}
+                },
+                after_state={
+                    "today": {"date": "2026-07-29", "focus": "", "blocks": []}
+                },
+                before_plans={"version": 1, "plans": []},
+                after_plans={"version": 1, "plans": [plan]},
+                job={"acceptedAt": "2026-07-29T19:20:51Z"},
+                batch={"routeObservationIds": [], "reviewObservationIds": []},
+            )
+
+    def test_ready_plan_requires_bold_technique_and_dose_lead(self):
+        plan = ready_plan()
+        plan["blocks"][0]["steps"][0]["lead"] = "Single-voice repair"
+        with self.assertRaisesRegex(DayPlanError, "duration/reps and technique"):
+            validate_coach_day_change(
+                before_state={
+                    "today": {"date": "2026-07-29", "focus": "", "blocks": []}
+                },
+                after_state={
+                    "today": {"date": "2026-07-29", "focus": "", "blocks": []}
+                },
+                before_plans={"version": 1, "plans": []},
+                after_plans={"version": 1, "plans": [plan]},
+                job={"acceptedAt": "2026-07-29T19:20:51Z"},
+                batch={"routeObservationIds": [], "reviewObservationIds": []},
+            )
+
+    def test_rough_plan_rejects_preview_prose(self):
+        with self.assertRaisesRegex(DayPlanError, "outline bullets"):
+            validate_coach_day_change(
+                before_state={
+                    "today": {"date": "2026-07-29", "focus": "", "blocks": []}
+                },
+                after_state={
+                    "today": {"date": "2026-07-29", "focus": "", "blocks": []}
+                },
+                before_plans={"version": 1, "plans": []},
+                after_plans={
+                    "version": 1,
+                    "plans": [
+                        {
+                            "date": "2026-07-31",
+                            "day": 3,
+                            "status": "rough",
+                            "preview": "A long paragraph about what may happen.",
+                        }
+                    ],
+                },
+                job={"acceptedAt": "2026-07-29T19:20:51Z"},
+                batch={"routeObservationIds": [], "reviewObservationIds": []},
             )
 
     def test_ready_plan_promotes_only_when_its_date_begins(self):

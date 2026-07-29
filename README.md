@@ -11,7 +11,9 @@ cannot be advanced early; the coach writes future work to `data/day-plans.json`,
 and the server promotes a ready plan only when that Europe/London date begins.
 The Plan view shows the current day beside future dates, and ready plans expose
 the exact block attached to every practice log or the dated reason it was
-deferred.
+deferred. Practice procedures are structured bullets rather than prose:
+technique and dose are bold, each bullet contains one action, and every block
+ends with a visible pass or stop test.
 
 ## Use it (zero setup)
 

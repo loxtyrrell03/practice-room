@@ -57,6 +57,9 @@ cards, 8–12 min per ~50–60 min of playing; tedious work — fingerings, note
 learning, fresh memorisation — sequenced early in the session as a soft rule).
 Future days also carry explicit timed **score-study** blocks, marked *off bench*,
 for forming and testing interpretation rather than passive score reading.
+New block instructions are structured as short bullets: each bold lead names
+the technique and its dose (minutes, reps, passes or runs), followed by one
+plain-language action and an observable pass/stop test.
 
 **Focus mode** — one block at a time, full screen: title, instructions, big
 timer, quick-log field, Done→next / Skip / Exit; timer completion auto-advances;
