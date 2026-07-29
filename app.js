@@ -92,6 +92,14 @@ window.addEventListener("DOMContentLoaded", async () => {
   if (cfg && cfg.token) start(); else showSetup();
 });
 
+/* live refresh: keep the page current when the coach updates files */
+setInterval(() => {
+  if (cfg && (cfg.token || cfg.local) && !pollTimer && document.visibilityState === "visible"
+      && focusIdx === null && !document.activeElement.matches("input, textarea")){
+    refreshQuiet();
+  }
+}, 25000);
+
 function wireChrome(){
   document.querySelectorAll(".tab").forEach(btn =>
     btn.addEventListener("click", () => switchView(btn.dataset.view)));
