@@ -17,6 +17,26 @@ HOSTED = "https://loxtyrrell03.github.io/practice-room/"
 
 coach_lock = threading.Lock()
 coach_running = False
+SESSION_FILE = HERE / ".coach-session.json"
+
+def load_session():
+    try:
+        d = json.loads(SESSION_FILE.read_text(encoding="utf-8"))
+        if time.time() - d.get("created", 0) < 7 * 86400:
+            return d.get("id")
+    except Exception:
+        pass
+    return None
+
+def save_session(sid):
+    try:
+        cur = {}
+        try: cur = json.loads(SESSION_FILE.read_text(encoding="utf-8"))
+        except Exception: pass
+        created = cur.get("created", time.time()) if cur.get("id") == sid else time.time()
+        SESSION_FILE.write_text(json.dumps({"id": sid, "created": created}), encoding="utf-8")
+    except Exception:
+        pass
 
 def log(msg): print(f"[practice-room] {msg}", flush=True)
 
@@ -60,15 +80,23 @@ def run_coach():
     try:
         prompt_file = DATA / ".github" / "coach-prompt.md"
         claude = shutil.which("claude") or "claude"
-        base = [claude, "-p", "--allowedTools", "Read,Write,Edit,Glob,Grep",
+        base = [claude, "-p", "--output-format", "json",
+                "--allowedTools", "Read,Write,Edit,Glob,Grep",
                 "--permission-mode", "acceptEdits", "--max-turns", "40"]
-        for extra in (["--model", MODEL], []):
-            log(f"coach thinking… (model: {extra[1] if extra else 'default'})")
+        sid = load_session()
+        attempts = []
+        if sid: attempts.append(["--resume", sid, "--model", MODEL])
+        attempts += [["--model", MODEL], []]
+        for extra in attempts:
+            kind = "resumed session" if "--resume" in extra else "fresh session"
+            log(f"coach thinking… ({kind}, model: {extra[-1] if '--model' in extra else 'default'})")
             with open(prompt_file, "r", encoding="utf-8") as f:
                 r = subprocess.run(base + extra, stdin=f, cwd=str(DATA),
                                    capture_output=True, text=True, timeout=900,
                                    shell=(os.name == "nt"))
             if r.returncode == 0:
+                try: save_session(json.loads(r.stdout).get("session_id"))
+                except Exception: pass
                 log("coach replied.")
                 break
             log(f"coach run failed (rc={r.returncode}): {(r.stderr or r.stdout)[:200]}")
