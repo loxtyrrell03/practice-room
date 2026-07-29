@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Green Room</title>
+<meta name="description" content="28 days to the stage.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="app.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎹</text></svg>">
+</head>
+<body>
+
+<header class="top">
+  <div class="brand" id="brand">The&nbsp;Green&nbsp;Room</div>
+  <div class="top-count" id="topCount"></div>
+</header>
+
+<nav class="tabs" id="tabs" hidden>
+  <button data-view="today" class="tab active">Today</button>
+  <button data-view="programme" class="tab">Programme</button>
+  <button data-view="coach" class="tab">Coach<span id="coachDot" class="dot" hidden></span></button>
+  <button data-view="journal" class="tab">Journal</button>
+</nav>
+
+<div id="banner" class="banner" hidden></div>
+
+<main id="main">
+
+  <!-- SETUP -->
+  <section id="view-setup" class="view" hidden>
+    <div class="hero">
+      <h1>The Green Room</h1>
+      <p class="lede">Twenty-eight days to the stage. Your plan, your journal, and a coach who
+      knows the whole score.</p>
+    </div>
+    <div class="card">
+      <h2>Connect</h2>
+      <p>This site keeps everything in your <strong>private</strong> GitHub repo. Paste a
+      fine-grained access token for <code id="setupRepoName">green-room-data</code> —
+      it stays in this browser only.</p>
+      <label class="field"><span>Your name</span>
+        <input id="setupName" type="text" placeholder="Lox" autocomplete="off">
+      </label>
+      <label class="field"><span>Access token</span>
+        <input id="setupToken" type="password" placeholder="github_pat_…" autocomplete="off">
+      </label>
+      <details class="adv">
+        <summary>Advanced</summary>
+        <label class="field"><span>Owner</span><input id="setupOwner" type="text" value="loxtyrrell03"></label>
+        <label class="field"><span>Data repo</span><input id="setupRepo" type="text" value="green-room-data"></label>
+      </details>
+      <button class="btn primary" id="setupGo">Open the Green Room</button>
+      <p class="hint">Need a token? GitHub → Settings → Developer settings →
+      Fine-grained tokens → New. Repository access: <em>only</em> green-room-data.
+      Permissions: Contents → Read and write. Full steps are in the repo README.</p>
+      <p class="hint err" id="setupErr" hidden></p>
+    </div>
+  </section>
+
+  <!-- TODAY -->
+  <section id="view-today" class="view" hidden>
+    <div class="hero">
+      <div class="daybig"><span id="dayNum">Day 1</span></div>
+      <div class="curtain" id="curtain">28 days to curtain</div>
+      <div class="dots" id="dots"></div>
+      <p class="focus" id="focus"></p>
+    </div>
+    <div id="gateBanner" class="gate" hidden></div>
+    <div class="card cold">
+      <div class="card-head">
+        <h2>Morning cold test</h2><span class="mins">10 min · before warm-up</span>
+      </div>
+      <p class="sub">First playing of the day, from memory, no warm-up. Tap each piece you tested.</p>
+      <div id="coldChips" class="chips"></div>
+      <p class="hint">tap once = ✓ passed · twice = ✕ broke down · three times = clear</p>
+    </div>
+    <div id="blocks"></div>
+    <div class="card evening">
+      <h2>End of day</h2>
+      <p>One slow pass (50–60%) of everything you played fast. Then tell the coach how it went —
+      it writes your journal and builds tomorrow.</p>
+      <button class="btn primary" id="debriefBtn">Debrief with your coach →</button>
+    </div>
+  </section>
+
+  <!-- PROGRAMME -->
+  <section id="view-programme" class="view" hidden>
+    <div class="hero small">
+      <h1>The programme</h1>
+      <p class="lede">Security means: could you perform it cold, today?</p>
+    </div>
+    <div id="pieces"></div>
+  </section>
+
+  <!-- COACH -->
+  <section id="view-coach" class="view" hidden>
+    <div class="chat-wrap">
+      <div class="chat-tools">
+        <button class="linkbtn" id="memBtn">What your coach remembers</button>
+      </div>
+      <div id="memPanel" class="mem" hidden></div>
+      <div id="thread" class="thread"></div>
+      <div id="quick" class="quick">
+        <button class="chip q" data-q="Debrief: ">Debrief today</button>
+        <button class="chip q" data-q="What exactly should I do tomorrow, and why?">Plan tomorrow</button>
+        <button class="chip q" data-q="I only have limited time today — restructure the day for me. I have: ">Short on time</button>
+        <button class="chip q" data-q="Why am I practising this the way the plan says? Explain: ">Why?</button>
+      </div>
+      <div class="composer">
+        <textarea id="input" rows="2" placeholder="Tell your coach how it went, or ask anything…"></textarea>
+        <button class="btn primary send" id="send">Send</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- JOURNAL -->
+  <section id="view-journal" class="view" hidden>
+    <div class="hero small">
+      <h1>Journal</h1>
+      <p class="lede">Written by your coach from your debriefs. Newest first.</p>
+    </div>
+    <div id="entries"></div>
+  </section>
+
+</main>
+
+<footer class="foot">
+  <span id="footLeft">The Green Room</span>
+  <span><button class="linkbtn" id="refreshBtn">refresh</button> · <button class="linkbtn" id="resetBtn">disconnect</button></span>
+</footer>
+
+<script src="app.js"></script>
+</body>
+</html>
