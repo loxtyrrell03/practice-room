@@ -1,0 +1,334 @@
+import json
+import tempfile
+import threading
+import unittest
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+
+from coach_queue import CoachQueue
+
+
+class FakeRunner:
+    def __init__(self, *, block_first=False, fail_first=False, fail_after_reply=False):
+        self.calls = []
+        self.block_first = block_first
+        self.fail_first = fail_first
+        self.fail_after_reply = fail_after_reply
+        self.started = threading.Event()
+        self.release = threading.Event()
+        self.lock = threading.Lock()
+
+    def __call__(self, stage, job):
+        with self.lock:
+            self.calls.append(job["messageId"])
+            call_number = len(self.calls)
+        if call_number == 1:
+            self.started.set()
+            if self.block_first:
+                self.release.wait(5)
+            if self.fail_first and not self.fail_after_reply:
+                raise RuntimeError("fake coach unavailable")
+
+        path = Path(stage) / "data/chat.json"
+        doc = json.loads(path.read_text(encoding="utf-8"))
+        doc["messages"].append(
+            {
+                "role": "coach",
+                "ts": job["acceptedAt"],
+                "text": f"reply to {job['text']}",
+            }
+        )
+        path.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
+        if call_number == 1 and self.fail_after_reply:
+            raise RuntimeError("fake crash after writing staged reply")
+
+
+class PrepareOnlyQueue(CoachQueue):
+    """Simulate a process stop after the prepared result is durable."""
+
+    def _apply_prepared(self, job_id):
+        self.prepared_job_id = job_id
+        return False
+
+
+class CoachQueueTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.data = Path(self.temp.name) / "data-repo"
+        (self.data / "data").mkdir(parents=True)
+        (self.data / "memory").mkdir()
+        fixtures = {
+            "data/chat.json": {"messages": []},
+            "data/state.json": {"startDate": "2026-07-29", "recitalDate": "2026-09-04"},
+            "data/journal.json": {"entries": []},
+            "data/spots.json": {"spots": []},
+            "data/observations.json": {"obs": []},
+            "data/observation-jobs.json": {"version": 1, "batches": {}},
+        }
+        for rel, value in fixtures.items():
+            (self.data / rel).write_text(json.dumps(value, indent=2) + "\n", encoding="utf-8")
+        (self.data / "memory/MEMORY.md").write_text("# Memory\n", encoding="utf-8")
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def messages(self):
+        return json.loads((self.data / "data/chat.json").read_text(encoding="utf-8"))["messages"]
+
+    def test_original_race_drains_message_accepted_while_running(self):
+        runner = FakeRunner(block_first=True)
+        queue = CoachQueue(self.data, runner, retry_base_seconds=0)
+        queue.start()
+        try:
+            first = queue.accept("first", "request-1")
+            self.assertTrue(runner.started.wait(2))
+            second = queue.accept("second", "request-2")
+            self.assertEqual(queue.snapshot()["processing"], 1)
+            self.assertEqual(queue.snapshot()["pending"], 1)
+            runner.release.set()
+            self.assertTrue(queue.wait_idle(5))
+        finally:
+            runner.release.set()
+            queue.stop()
+
+        self.assertEqual(runner.calls, [first["messageId"], second["messageId"]])
+        self.assertEqual(
+            [(m["role"], m["text"]) for m in self.messages()],
+            [
+                ("user", "first"),
+                ("coach", "reply to first"),
+                ("user", "second"),
+                ("coach", "reply to second"),
+            ],
+        )
+
+    def test_rapid_submissions_are_processed_in_acceptance_order(self):
+        runner = FakeRunner()
+        queue = CoachQueue(self.data, runner, retry_base_seconds=0)
+        accepted = [queue.accept(f"message {i}", f"request-{i}") for i in range(12)]
+
+        queue.drain_until_idle(ignore_retry_time=True)
+
+        self.assertEqual(runner.calls, [item["messageId"] for item in accepted])
+        replies = [m for m in self.messages() if m["role"] == "coach"]
+        self.assertEqual([m["text"] for m in replies], [f"reply to message {i}" for i in range(12)])
+
+    def test_concurrent_phone_and_laptop_intake_is_lossless(self):
+        runner = FakeRunner()
+        queue = CoachQueue(self.data, runner, retry_base_seconds=0)
+
+        def send(i):
+            return queue.accept(f"concurrent {i}", f"device-request-{i}")
+
+        with ThreadPoolExecutor(max_workers=16) as pool:
+            accepted = list(pool.map(send, range(40)))
+        queue.drain_until_idle(ignore_retry_time=True)
+
+        jobs = sorted(queue.snapshot()["jobs"], key=lambda item: item["sequence"])
+        self.assertEqual(len(jobs), 40)
+        self.assertEqual(len({item["messageId"] for item in accepted}), 40)
+        self.assertEqual(runner.calls, [item["messageId"] for item in jobs])
+        self.assertEqual(len([m for m in self.messages() if m["role"] == "coach"]), 40)
+
+    def test_failure_is_visible_and_retries_without_skipping_fifo_head(self):
+        runner = FakeRunner(fail_first=True)
+        queue = CoachQueue(self.data, runner, retry_base_seconds=60)
+        first = queue.accept("first", "request-1")
+        second = queue.accept("second", "request-2")
+
+        self.assertTrue(queue.drain_once())
+        snap = queue.snapshot()
+        self.assertEqual(snap["failed"], 1)
+        self.assertIn("fake coach unavailable", snap["jobs"][0]["lastError"])
+        self.assertFalse(queue.drain_once())
+
+        queue.drain_until_idle(ignore_retry_time=True)
+        self.assertEqual(
+            runner.calls,
+            [first["messageId"], first["messageId"], second["messageId"]],
+        )
+        self.assertEqual(queue.snapshot()["pending"], 0)
+
+    def test_processing_job_is_recovered_after_restart(self):
+        runner = FakeRunner()
+        queue = CoachQueue(self.data, runner, retry_base_seconds=0)
+        accepted = queue.accept("survive restart", "request-restart")
+        saved = json.loads(queue.queue_path.read_text(encoding="utf-8"))
+        saved["jobs"][0]["state"] = "processing"
+        queue.queue_path.write_text(json.dumps(saved, indent=2) + "\n", encoding="utf-8")
+
+        restarted = CoachQueue(self.data, runner, retry_base_seconds=0)
+        self.assertEqual(restarted.snapshot()["jobs"][0]["state"], "queued")
+        restarted.drain_until_idle(ignore_retry_time=True)
+
+        self.assertEqual(runner.calls, [accepted["messageId"]])
+        self.assertEqual(len([m for m in self.messages() if m["role"] == "coach"]), 1)
+
+    def test_request_id_and_reply_replay_cannot_duplicate(self):
+        runner = FakeRunner()
+        queue = CoachQueue(self.data, runner, retry_base_seconds=0)
+
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            results = list(pool.map(lambda _: queue.accept("same send", "stable-request-id"), range(20)))
+        self.assertEqual(len({item["messageId"] for item in results}), 1)
+        queue.drain_until_idle(ignore_retry_time=True)
+        self.assertEqual(len(runner.calls), 1)
+
+        # Simulate a stop after the reply became visible but before the durable
+        # job state was recorded as done.
+        saved = json.loads(queue.queue_path.read_text(encoding="utf-8"))
+        saved["jobs"][0]["state"] = "processing"
+        saved["jobs"][0]["completedAt"] = None
+        queue.queue_path.write_text(json.dumps(saved, indent=2) + "\n", encoding="utf-8")
+        restarted = CoachQueue(self.data, runner, retry_base_seconds=0)
+        restarted.drain_until_idle(ignore_retry_time=True)
+
+        self.assertEqual(len(runner.calls), 1)
+        self.assertEqual(len([m for m in self.messages() if m["role"] == "coach"]), 1)
+
+    def test_crash_after_staged_reply_leaves_no_live_duplicate(self):
+        runner = FakeRunner(fail_after_reply=True)
+        queue = CoachQueue(self.data, runner, retry_base_seconds=0)
+        queue.accept("one", "request-one")
+
+        queue.drain_until_idle(ignore_retry_time=True)
+
+        self.assertEqual(len(runner.calls), 2)
+        replies = [m for m in self.messages() if m["role"] == "coach"]
+        self.assertEqual(len(replies), 1)
+        self.assertEqual(replies[0]["text"], "reply to one")
+
+    def test_prepared_result_is_applied_after_restart_without_rerunning(self):
+        runner = FakeRunner()
+        queue = PrepareOnlyQueue(self.data, runner, retry_base_seconds=0)
+        accepted = queue.accept("prepared", "request-prepared")
+
+        queue.drain_once(ignore_retry_time=True)
+        self.assertEqual(queue.snapshot()["jobs"][0]["state"], "prepared")
+        self.assertEqual(runner.calls, [accepted["messageId"]])
+        self.assertFalse([m for m in self.messages() if m["role"] == "coach"])
+
+        restarted = CoachQueue(self.data, runner, retry_base_seconds=0)
+        restarted.drain_until_idle(ignore_retry_time=True)
+        replies = [m for m in self.messages() if m["role"] == "coach"]
+        self.assertEqual(runner.calls, [accepted["messageId"]])
+        self.assertEqual(len(replies), 1)
+        self.assertEqual(replies[0]["replyTo"], accepted["messageId"])
+
+    def test_live_browser_change_is_merged_with_coach_result(self):
+        started = threading.Event()
+        release = threading.Event()
+
+        def runner(stage, job):
+            started.set()
+            release.wait(5)
+            state_path = Path(stage) / "data/state.json"
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            state["tomorrowPreview"] = "coach update"
+            state_path.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+            chat_path = Path(stage) / "data/chat.json"
+            chat = json.loads(chat_path.read_text(encoding="utf-8"))
+            chat["messages"].append(
+                {"role": "coach", "ts": job["acceptedAt"], "text": "merged reply"}
+            )
+            chat_path.write_text(json.dumps(chat, indent=2) + "\n", encoding="utf-8")
+
+        queue = CoachQueue(self.data, runner, retry_base_seconds=0)
+        queue.start()
+        try:
+            queue.accept("merge this", "request-merge")
+            self.assertTrue(started.wait(2))
+            state_path = self.data / "data/state.json"
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            state["streak"] = 7
+            state_path.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+            release.set()
+            self.assertTrue(queue.wait_idle(5))
+        finally:
+            release.set()
+            queue.stop()
+
+        merged = json.loads((self.data / "data/state.json").read_text(encoding="utf-8"))
+        self.assertEqual(merged["streak"], 7)
+        self.assertEqual(merged["tomorrowPreview"], "coach update")
+
+    def test_queue_first_acceptance_recovers_transient_chat_write_failure(self):
+        runner = FakeRunner()
+        queue = CoachQueue(self.data, runner, retry_base_seconds=0)
+        original = queue._ensure_user_message
+        failed_once = threading.Event()
+
+        def fail_once(job):
+            if not failed_once.is_set():
+                failed_once.set()
+                raise OSError("transient chat write failure")
+            return original(job)
+
+        queue._ensure_user_message = fail_once
+        queue.start()
+        try:
+            with self.assertRaises(OSError):
+                queue.accept("durable first", "queue-first-request")
+            self.assertTrue(queue.wait_idle(5))
+        finally:
+            queue.stop()
+
+        jobs = queue.snapshot()["jobs"]
+        self.assertEqual(len(jobs), 1)
+        self.assertEqual(jobs[0]["state"], "done")
+        self.assertEqual(
+            [(m["role"], m["text"]) for m in self.messages()],
+            [("user", "durable first"), ("coach", "reply to durable first")],
+        )
+
+    def test_first_start_migrates_legacy_trailing_users_into_fifo(self):
+        chat_path = self.data / "data/chat.json"
+        chat_path.write_text(
+            json.dumps(
+                {
+                    "messages": [
+                        {
+                            "role": "coach",
+                            "ts": "2026-07-29T10:00:00Z",
+                            "text": "previous reply",
+                        },
+                        {
+                            "role": "user",
+                            "ts": "2026-07-29T10:01:00Z",
+                            "text": "stranded one",
+                        },
+                        {
+                            "role": "user",
+                            "ts": "2026-07-29T10:02:00Z",
+                            "text": "stranded two",
+                        },
+                    ]
+                },
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        runner = FakeRunner()
+        queue = CoachQueue(self.data, runner, retry_base_seconds=0)
+        migrated = queue.snapshot()["jobs"]
+        self.assertEqual([job["sequence"] for job in migrated], [1, 2])
+        self.assertTrue(all(job["messageId"].startswith("message-legacy-") for job in migrated))
+
+        queue.drain_until_idle(ignore_retry_time=True)
+
+        self.assertEqual(len(runner.calls), 2)
+        self.assertEqual(
+            [(m["role"], m["text"]) for m in self.messages()],
+            [
+                ("coach", "previous reply"),
+                ("user", "stranded one"),
+                ("coach", "reply to stranded one"),
+                ("user", "stranded two"),
+                ("coach", "reply to stranded two"),
+            ],
+        )
+
+
+if __name__ == "__main__":
+    unittest.main()

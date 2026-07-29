@@ -8,6 +8,7 @@ on disk, runs the coach, and syncs GitHub only as a backup.
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -18,6 +19,7 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
+from coach_queue import CoachQueue
 from practice_logs import (
     JOBS_REL,
     OBSERVATIONS_REL,
@@ -33,13 +35,17 @@ PORT = 8977
 MODEL = os.environ.get("COACH_MODEL", "claude-opus-5")
 os.environ.setdefault("MAX_THINKING_TOKENS", "10000")  # medium reasoning
 PHONE_URL = "https://lox.tail89d19b.ts.net:10000/"
+SESSION_FILE = HERE / ".coach-session.json"
 
-coach_lock = threading.Lock()
+# Storage writes, whole coach transactions, and the CLI itself have different
+# lock scopes. Practice notes remain immediately saveable while Claude works.
+data_lock = threading.RLock()
+coach_transaction_lock = threading.Lock()
+cli_lock = threading.Lock()
 sync_lock = threading.Lock()
 pipeline_init_lock = threading.Lock()
-coach_running = False
 observation_pipeline = None
-SESSION_FILE = HERE / ".coach-session.json"
+coach_queue = None
 
 
 def load_session():
@@ -86,8 +92,27 @@ def git(repo, *args):
         return False, str(exc)
 
 
+def queue_blocks_backup():
+    """Never publish a user message that the local FIFO still owns."""
+    if coach_queue:
+        queue = coach_queue.snapshot()
+        return bool(queue["pending"] or queue["processing"])
+    path = DATA / ".coach-queue.json"
+    try:
+        store = json.loads(path.read_text(encoding="utf-8"))
+        return any(job.get("state") != "done" for job in store.get("jobs", []))
+    except FileNotFoundError:
+        return False
+    except Exception:
+        # A malformed durable queue needs local inspection, not an Actions race.
+        return True
+
+
 def sync_push(reason):
     """Best-effort backup. Local durability does not depend on GitHub."""
+    if queue_blocks_backup():
+        log("backup deferred until the local coach queue is fully drained")
+        return False
     with sync_lock:
         git(DATA, "add", "-A")
         unchanged, _ = git(DATA, "diff", "--cached", "--quiet")
@@ -126,51 +151,14 @@ def get_observation_pipeline():
                     DATA,
                     daily_time=os.environ.get("COACH_DAILY_LOG_TIME", "20:30"),
                     sync_callback=sync_push,
+                    storage_lock=data_lock,
+                    run_lock=coach_transaction_lock,
                 )
     return observation_pipeline
 
 
-def chat_last_role():
-    try:
-        pipeline = get_observation_pipeline()
-        with pipeline.lock:
-            doc = json.loads(safe_path("data/chat.json").read_text(encoding="utf-8"))
-        return doc["messages"][-1]["role"] if doc["messages"] else "coach"
-    except Exception:
-        return "coach"
-
-
-def _latest_user_message():
-    pipeline = get_observation_pipeline()
-    with pipeline.lock:
-        doc = json.loads(safe_path("data/chat.json").read_text(encoding="utf-8"))
-    for message in reversed(doc.get("messages", [])):
-        if message.get("role") == "user":
-            return message
-    return None
-
-
-def _run_staged_claude(stage, batch):
-    """Run one isolated coach turn. The pipeline applies its outputs."""
-    prompt_name = (
-        "daily-log-prompt.md" if batch["source"] == "daily" else "coach-prompt.md"
-    )
-    prompt_file = stage / ".github" / prompt_name
-    batch_header = (
-        "PRACTICE ROOM SERVER BATCH\n"
-        + json.dumps(
-            {
-                "id": batch["id"],
-                "source": batch["source"],
-                "routeObservationIds": batch.get("routeObservationIds", []),
-                "reviewObservationIds": batch.get("reviewObservationIds", []),
-                "acknowledge": batch.get("acknowledge", False),
-            },
-            ensure_ascii=False,
-        )
-        + "\nEND SERVER BATCH\n\n"
-    )
-    prompt = batch_header + prompt_file.read_text(encoding="utf-8")
+def run_claude(repo, prompt, source):
+    """Run one CLI turn. Transaction ordering is owned by the caller."""
     claude = shutil.which("claude") or "claude"
     base = [
         claude,
@@ -189,93 +177,115 @@ def _run_staged_claude(stage, batch):
     if session_id:
         attempts.append(["--resume", session_id, "--model", MODEL])
     attempts += [["--model", MODEL], []]
-    last_error = "unknown coach failure"
-    for extra in attempts:
-        kind = "resumed session" if "--resume" in extra else "fresh session"
-        model = extra[-1] if "--model" in extra else "default"
-        log(f"coach thinking... ({batch['source']}, {kind}, model: {model})")
-        result = subprocess.run(
-            base + extra,
-            input=prompt,
-            cwd=str(stage),
-            capture_output=True,
-            text=True,
-            timeout=900,
-            shell=(os.name == "nt"),
+    errors = []
+
+    with cli_lock:
+        for extra in attempts:
+            kind = "resumed session" if "--resume" in extra else "fresh session"
+            model = extra[-1] if "--model" in extra else "default"
+            log(f"coach thinking... ({source}, {kind}, model: {model})")
+            result = subprocess.run(
+                base + extra,
+                input=prompt,
+                cwd=str(repo),
+                capture_output=True,
+                text=True,
+                timeout=900,
+                shell=(os.name == "nt"),
+            )
+            if result.returncode == 0:
+                new_session = None
+                try:
+                    new_session = json.loads(result.stdout).get("session_id")
+                except Exception:
+                    match = re.search(
+                        r'"session_id"\s*:\s*"([^"]+)"', result.stdout or ""
+                    )
+                    new_session = match.group(1) if match else None
+                if new_session:
+                    save_session(new_session)
+                    log(f"coach finished (session {new_session[:8]}...).")
+                else:
+                    log(
+                        "coach finished "
+                        f"(no session id: {(result.stdout or '')[:120]!r})"
+                    )
+                return
+            detail = (
+                result.stderr or result.stdout or f"coach exit {result.returncode}"
+            )[:500]
+            errors.append(detail)
+            log(f"coach run failed (rc={result.returncode}): {detail[:200]}")
+    raise RuntimeError("Claude CLI failed: " + " | ".join(errors))
+
+
+def _batch_prompt(stage, batch, job=None):
+    prompt_name = (
+        "daily-log-prompt.md" if batch["source"] == "daily" else "coach-prompt.md"
+    )
+    header = {
+        "id": batch["id"],
+        "source": batch["source"],
+        "routeObservationIds": batch.get("routeObservationIds", []),
+        "reviewObservationIds": batch.get("reviewObservationIds", []),
+        "acknowledge": batch.get("acknowledge", False),
+    }
+    if job:
+        header["targetMessageId"] = job["messageId"]
+    prompt = (
+        "PRACTICE ROOM SERVER BATCH\n"
+        + json.dumps(header, ensure_ascii=False)
+        + "\nEND SERVER BATCH\n\n"
+        + (Path(stage) / ".github" / prompt_name).read_text(encoding="utf-8")
+    )
+    if job:
+        prompt += f"""
+
+## Authoritative queued-message dispatch
+
+Answer the user message whose `id` is `{job["messageId"]}` and whose exact text
+is {json.dumps(job["text"], ensure_ascii=False)}. Other user messages may appear
+after it; ignore them during this run. Append exactly one coach reply and do not
+rewrite chat history. The server attaches the durable reply ID and places the
+reply beside this target after validation.
+"""
+    return prompt
+
+
+def _run_staged_claude(stage, batch, job=None):
+    source = "daily practice logs" if batch["source"] == "daily" else "coach message"
+    run_claude(stage, _batch_prompt(stage, batch, job), source)
+
+
+class ClaudeCoachRunner:
+    """Route observations and answer one queued message in an outer snapshot."""
+
+    def __call__(self, stage, job):
+        staged_pipeline = ObservationPipeline(
+            stage,
+            daily_time=os.environ.get("COACH_DAILY_LOG_TIME", "20:30"),
         )
-        if result.returncode == 0:
-            new_session_id = None
-            try:
-                new_session_id = json.loads(result.stdout).get("session_id")
-            except Exception:
-                import re
-
-                match = re.search(
-                    r'"session_id"\s*:\s*"([^"]+)"', result.stdout or ""
-                )
-                new_session_id = match.group(1) if match else None
-            if new_session_id:
-                save_session(new_session_id)
-                log(f"coach finished (session {new_session_id[:8]}...).")
-            else:
-                log(f"coach finished (no session id: {(result.stdout or '')[:120]!r})")
-            return
-        last_error = (result.stderr or result.stdout or "coach command failed")[:500]
-        log(f"coach run failed (rc={result.returncode}): {last_error[:200]}")
-    raise RuntimeError(last_error)
-
-
-def run_coach():
-    """Run a normal chat turn, including any eligible practice logs."""
-    global coach_running
-    with coach_lock:
-        if coach_running:
-            return
-        coach_running = True
-    try:
-        message = _latest_user_message()
-        if not message:
-            return
-        text = str(message.get("text") or "")
-        source_key = str(message.get("id") or f"{message.get('ts', '')}|{text}")
-        result = get_observation_pipeline().process_for_coach(
-            _run_staged_claude,
-            source_key=source_key,
-            is_debrief=text.strip().lower().startswith("debrief"),
+        staged_pipeline.migrate()
+        staged_pipeline.recover()
+        result = staged_pipeline.process_for_coach(
+            lambda inner_stage, batch: _run_staged_claude(inner_stage, batch, job),
+            source_key=job["messageId"],
+            is_debrief=job["text"].strip().lower().startswith("debrief"),
         )
         if result.get("status") in {"failed", "recovering"}:
-            detail = result.get("error") or "unknown error"
-            log(f"coach batch did not finish: {detail}")
-            if result.get("status") == "failed":
-                _append_coach_error(
-                    "The coach couldn't run - check the server window "
-                    "(the saved practice logs will retry safely)."
-                )
-                sync_push("coach error")
-    except Exception as exc:
-        log(f"coach error: {exc}")
-        _append_coach_error(f"The coach hit an error: {exc}")
-        sync_push("coach error")
-    finally:
-        coach_running = False
-
-
-def _append_coach_error(text):
-    try:
-        pipeline = get_observation_pipeline()
-        path = safe_path("data/chat.json")
-        with pipeline.lock:
-            doc = json.loads(path.read_text(encoding="utf-8"))
-            doc["messages"].append(
-                {
-                    "role": "coach",
-                    "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                    "text": text,
-                }
+            raise RuntimeError(result.get("error") or "coach batch failed")
+        if result.get("status") == "skipped":
+            raise RuntimeError(
+                "coach batch was already marked processed without a reply"
             )
-            atomic_write_json(path, doc)
-    except Exception:
-        pass
+
+
+def queue_completed(_job_id):
+    queue = coach_queue.snapshot()
+    if not queue["pending"] and not queue["processing"]:
+        threading.Thread(
+            target=sync_push, args=("coach session",), daemon=True
+        ).start()
 
 
 class Handler(SimpleHTTPRequestHandler):
@@ -298,21 +308,28 @@ class Handler(SimpleHTTPRequestHandler):
         url = urlparse(self.path)
         if url.path == "/api/meta":
             ok, name = git(DATA, "config", "user.name")
-            summary = get_observation_pipeline().summary()
+            practice_logs = get_observation_pipeline().summary()
+            queue = coach_queue.snapshot() if coach_queue else {
+                "pending": 0,
+                "processing": 0,
+                "failed": 0,
+                "jobs": [],
+            }
+            log_processing = practice_logs["counts"].get("processing", 0)
             return self._json(
                 200,
                 {
                     "mode": "local",
                     "name": name.split()[0] if ok and name else "you",
-                    "coachRunning": coach_running,
-                    "practiceLogs": summary,
+                    "coachRunning": bool(queue["processing"] or log_processing),
+                    "coachQueue": queue,
+                    "practiceLogs": practice_logs,
                 },
             )
         if url.path == "/api/file":
             rel = parse_qs(url.query).get("path", [""])[0]
             try:
-                pipeline = get_observation_pipeline()
-                with pipeline.lock:
+                with data_lock:
                     content = safe_path(rel).read_text(encoding="utf-8")
                 return self._json(200, {"content": content})
             except FileNotFoundError:
@@ -342,10 +359,8 @@ class Handler(SimpleHTTPRequestHandler):
                     return self._json(
                         409, {"error": "practice logs use the observation endpoint"}
                     )
-                path = safe_path(rel)
-                pipeline = get_observation_pipeline()
-                with pipeline.lock:
-                    atomic_write_text(path, payload["content"])
+                with data_lock:
+                    atomic_write_text(safe_path(rel), payload["content"])
                 return self._json(200, {"ok": True})
             except Exception as exc:
                 return self._json(400, {"error": str(exc)})
@@ -364,34 +379,22 @@ class Handler(SimpleHTTPRequestHandler):
                 return self._json(500, {"error": "practice log could not be saved"})
 
         if url.path == "/api/chat":
-            text = (payload.get("text") or "").strip()
-            if not text:
-                return self._json(400, {"error": "empty"})
             try:
-                path = safe_path("data/chat.json")
-                pipeline = get_observation_pipeline()
-                with pipeline.lock:
-                    doc = json.loads(path.read_text(encoding="utf-8"))
-                    doc["messages"].append(
-                        {
-                            "role": "user",
-                            "text": text,
-                            "ts": time.strftime(
-                                "%Y-%m-%dT%H:%M:%SZ", time.gmtime()
-                            ),
-                        }
-                    )
-                    atomic_write_json(path, doc)
+                job = coach_queue.accept(
+                    payload.get("text"), payload.get("requestId")
+                )
+                return self._json(202, {"ok": True, "job": job})
+            except ValueError as exc:
+                code = 409 if "requestId" in str(exc) else 400
+                return self._json(code, {"error": str(exc)})
             except Exception as exc:
                 return self._json(500, {"error": str(exc)})
-            threading.Thread(target=run_coach, daemon=True).start()
-            return self._json(200, {"ok": True})
 
         return self._json(404, {"error": "unknown endpoint"})
 
 
 def background_loop():
-    """Catch up daily logs after start/wake, retry safely, and back up quietly."""
+    """Catch up daily logs, retry safely, and back up quiet snapshots."""
     last_autosave = 0.0
     first = True
     while True:
@@ -414,24 +417,40 @@ def background_loop():
         if time.monotonic() - last_autosave >= 120:
             last_autosave = time.monotonic()
             try:
-                if chat_last_role() != "user":
+                queue = coach_queue.snapshot()
+                logs = get_observation_pipeline().summary()["counts"]
+                if (
+                    not queue["pending"]
+                    and not queue["processing"]
+                    and not logs.get("processing", 0)
+                ):
                     sync_push("autosave")
             except Exception:
                 pass
 
 
 def main():
+    global coach_queue
     if not DATA.exists():
         log("data-repo/ is missing - clone practice-room-data into it first.")
         return
     log("pulling latest...")
     git(HERE, "pull", "--rebase")
     git(DATA, "pull", "--rebase")
+
     pipeline = get_observation_pipeline()
     pipeline.migrate()
+    coach_queue = CoachQueue(
+        DATA,
+        ClaudeCoachRunner(),
+        lock=data_lock,
+        on_completed=queue_completed,
+        transaction_lock=coach_transaction_lock,
+    )
     recovered = pipeline.recover()
     if recovered["recovered"]:
         log(f"recovered practice-log batches: {', '.join(recovered['recovered'])}")
+    coach_queue.start()
     threading.Thread(target=background_loop, daemon=True).start()
     log(f"daily practice-log batch -> {pipeline.daily_time_text} Europe/London")
     log(f"Practice Room -> http://localhost:{PORT}")
@@ -441,7 +460,10 @@ def main():
             webbrowser.open(f"http://localhost:{PORT}")
         except Exception:
             pass
-    ThreadingHTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
+    try:
+        ThreadingHTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
+    finally:
+        coach_queue.stop()
 
 
 if __name__ == "__main__":

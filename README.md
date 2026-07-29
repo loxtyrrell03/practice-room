@@ -14,6 +14,16 @@ runs through your already-logged-in Claude CLI. No tokens, no accounts.
 Everything syncs to the private `practice-room-data` repo in the background as
 a backup (best effort — offline is fine).
 
+## Coach-message durability
+
+Every accepted chat message is written to a private FIFO before the server
+acknowledges it. Rapid phone/laptop sends stay in acceptance order; the UI shows
+saved/waiting, processing, and failed/retrying state per message. Claude works
+in an isolated snapshot, then the server applies one prepared result with a
+deterministic reply ID. A restart resumes queued or prepared work without a
+second visible reply. Backup is deferred until the entire chat queue drains, so
+the GitHub Actions fallback cannot race the local coach.
+
 ## Practice-log durability
 
 The one-line log on each practice block is accepted by a dedicated server

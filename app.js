@@ -9,6 +9,7 @@ let cfg = null;           // {name}
 let docs = {};            // path -> {obj|text, sha}
 let pollTimer = null;
 let currentView = "today";
+let coachQueue = {pending:0, processing:0, failed:0, jobs:[]};
 
 /* ── Private backend ─────────────────────────────────────── */
 async function ghGet(path, {fresh=false} = {}){
@@ -40,6 +41,7 @@ window.addEventListener("DOMContentLoaded", async () => {
     const m = r.ok ? await r.json() : null;
     if (!m || m.mode !== "local") throw new Error("private backend unavailable");
     cfg = { name: m.name || "you", practiceLogs: m.practiceLogs || null };
+    coachQueue = m.coachQueue || coachQueue;
     return start();
   } catch {
     if (location.origin !== PRIVATE_ORIGIN) location.replace(PRIVATE_ORIGIN + "/");
@@ -92,6 +94,7 @@ function showApp(){
   $("tabs").hidden = false;
   renderAll();
   switchView(currentView);
+  if (coachQueue.pending || coachQueue.processing) startPolling();
 }
 
 async function start(){
@@ -119,10 +122,12 @@ async function start(){
 
 async function refreshQuiet(){
   try {
-    const [st, ch, jr] = await Promise.all([
+    const [st, ch, jr, meta] = await Promise.all([
       ghGet(FILES.state, {fresh:true}), ghGet(FILES.chat, {fresh:true}), ghGet(FILES.journal, {fresh:true}),
+      fetch(`/api/meta?t=${Date.now()}`, {cache:"no-store"}).then(r => r.json()),
     ]);
     docs[FILES.state] = st; docs[FILES.chat] = ch; docs[FILES.journal] = jr;
+    coachQueue = meta.coachQueue || coachQueue;
     try { docs[FILES.spots] = await ghGet(FILES.spots, {fresh:true}); } catch {}
     try { docs[FILES.obs] = await ghGet(FILES.obs, {fresh:true}); } catch {}
     renderAll();
@@ -586,7 +591,6 @@ function renderCoach(){
   const t = $("thread"); t.innerHTML = "";
   const msgs = chat().messages || [];
   msgs.forEach(m => t.appendChild(bubble(m)));
-  if (msgs.length && msgs[msgs.length-1].role === "user") t.appendChild(thinkingBubble());
   scrollThread();
 }
 
@@ -599,14 +603,22 @@ function bubble(m){
   const body = document.createElement("div");
   body.innerHTML = mdLite(m.text);
   d.appendChild(body);
-  return d;
-}
-
-function thinkingBubble(){
-  const d = document.createElement("div");
-  d.className = "msg coach pending";
-  d.id = "pendingMsg";
-  d.textContent = "The coach is at the piano… replies usually land within a minute or two.";
+  if (m.role === "user" && m.id){
+    const job = (coachQueue.jobs || []).find(j => j.messageId === m.id);
+    if (job && job.state !== "done"){
+      const status = document.createElement("div");
+      status.className = "queue-state " + job.state;
+      if (job.state === "processing") status.textContent = "coach is replying…";
+      else if (job.state === "prepared") status.textContent = "reply ready · saving…";
+      else if (job.state === "failed") {
+        status.textContent = "✓ saved · coach failed · retrying";
+        if (job.lastError) status.title = job.lastError;
+      } else {
+        status.textContent = `✓ saved · waiting${job.position ? ` · #${job.position}` : ""}`;
+      }
+      d.appendChild(status);
+    }
+  }
   return d;
 }
 
@@ -641,10 +653,24 @@ async function sendMessage(){
   if (!text) return;
   $("send").disabled = true;
   try {
+    let outbox = null;
+    try { outbox = JSON.parse(localStorage.getItem("practice-room-chat-outbox")); } catch {}
+    const requestId = outbox && outbox.text === text ? outbox.requestId :
+      (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`);
+    try { localStorage.setItem("practice-room-chat-outbox", JSON.stringify({requestId, text})); } catch {}
     const r = await fetch("/api/chat", { method:"POST", headers:{"Content-Type":"application/json"},
-      body: JSON.stringify({ text }) });
+      body: JSON.stringify({ text, requestId }) });
     if (!r.ok) throw new Error("Couldn't reach the coach — is the laptop awake?");
-    docs[FILES.chat].obj.messages.push({ role:"user", text, ts: new Date().toISOString() });
+    const accepted = await r.json();
+    const message = accepted.job.message;
+    if (!(docs[FILES.chat].obj.messages || []).some(m => m.id === message.id)){
+      docs[FILES.chat].obj.messages.push(message);
+    }
+    const idx = (coachQueue.jobs || []).findIndex(j => j.id === accepted.job.id);
+    if (idx >= 0) coachQueue.jobs[idx] = accepted.job;
+    else coachQueue.jobs.push(accepted.job);
+    coachQueue.pending = (coachQueue.jobs || []).filter(j => ["queued","failed"].includes(j.state)).length;
+    try { localStorage.removeItem("practice-room-chat-outbox"); } catch {}
     box.value = "";
     renderCoach();
     startPolling();
@@ -654,13 +680,16 @@ async function sendMessage(){
 
 function startPolling(){
   stopPolling();
-  const begun = Date.now();
   pollTimer = setInterval(async () => {
     try {
-      const fresh = await ghGet(FILES.chat, {fresh:true});
-      const msgs = fresh.obj.messages || [];
-      if (msgs.length && msgs[msgs.length-1].role !== "user"){
-        docs[FILES.chat] = fresh;
+      const [fresh, meta] = await Promise.all([
+        ghGet(FILES.chat, {fresh:true}),
+        fetch(`/api/meta?t=${Date.now()}`, {cache:"no-store"}).then(r => r.json()),
+      ]);
+      docs[FILES.chat] = fresh;
+      coachQueue = meta.coachQueue || coachQueue;
+      renderCoach();
+      if (!coachQueue.pending && !coachQueue.processing){
         stopPolling();
         const [st, jr] = await Promise.all([ghGet(FILES.state,{fresh:true}), ghGet(FILES.journal,{fresh:true})]);
         docs[FILES.state] = st; docs[FILES.journal] = jr;
@@ -669,13 +698,7 @@ function startPolling(){
         return;
       }
     } catch {}
-    if (Date.now() - begun > 5*60*1000){
-      stopPolling();
-      const p = $("pendingMsg");
-      if (p) p.textContent =
-        "No reply yet — check the Practice Room server on the laptop (the Claude CLI may need attention).";
-    }
-  }, 8000);
+  }, 4000);
 }
 function stopPolling(){ if (pollTimer){ clearInterval(pollTimer); pollTimer = null; } }
 
