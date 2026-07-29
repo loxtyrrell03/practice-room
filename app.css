@@ -194,12 +194,14 @@ body.focusing{overflow:hidden}
 .p-note{color:var(--ink2);font-size:.95rem;margin-top:10px}
 
 .spots{margin-top:12px;display:flex;flex-direction:column;gap:6px}
-.spot{display:flex;gap:10px;align-items:baseline;font-size:.88rem;color:var(--ink2);
+.spot{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 14px;
+  align-items:baseline;font-size:.88rem;color:var(--ink2);
   background:var(--card2);border:1px solid var(--line);border-radius:10px;padding:7px 12px}
-.spot .s-bars{font-weight:700;color:#eda28d;white-space:nowrap}
+.spot .s-bars{min-width:0;font-weight:700;color:#eda28d;line-height:1.45;
+  overflow-wrap:anywhere}
 .spot.watching .s-bars{color:#ecc788}
-.spot .s-issue{flex:1}
-.spot .s-meta{color:var(--mut);font-size:.78rem;white-space:nowrap}
+.spot .s-issue{grid-column:1/-1;min-width:0;line-height:1.5;overflow-wrap:anywhere}
+.spot .s-meta{grid-column:2;grid-row:1;color:var(--mut);font-size:.78rem;white-space:nowrap}
 .spot.fixedcount{color:#8fd2a4;background:none;border-style:dashed}
 
 /* weekly plan */
@@ -489,6 +491,9 @@ code{background:var(--card2);padding:2px 7px;border-radius:6px;font-size:.88em}
   html{font-size:17px}
   .daybig{font-size:2.7rem}
   .today-identity{flex-direction:column;gap:10px}
+  .spot{grid-template-columns:minmax(0,1fr);gap:2px}
+  .spot .s-meta{grid-column:1;grid-row:2;margin-bottom:2px}
+  .spot .s-issue{grid-column:1;grid-row:3}
   .plan-block{grid-template-columns:30px 1fr}
   .deferred-evidence{grid-template-columns:1fr;gap:12px}
   .msg{max-width:95%}
