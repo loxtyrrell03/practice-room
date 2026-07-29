@@ -46,6 +46,22 @@ a restart finishes prepared output without generating duplicate spot-history or
 memory effects. GitHub backup failure retries only the push, never the coach
 effects.
 
+## Working-repertoire changes
+
+A definite coach message such as “I’m dropping X” updates the canonical active
+repertoire inside the same prepared queue transaction as the reply. Ambiguous
+language, an unknown piece, or an incomplete addition changes nothing and gets
+one focused clarification question. Additions retain the pianist’s exact title,
+version, current state, duration, deadline and target tempo; missing essentials
+are never guessed.
+
+Every confirmed change has one dated audit record. The coach must also rebuild
+unfinished blocks, week goals and gates, remaining workload, learning and
+memorisation deadlines, performance exposure, physical-risk limits, cut order,
+and prescriptions before the transaction can commit. Completed journal and
+trouble-spot history stays intact. The source PDFs on the Desktop are never
+edited.
+
 Run the isolated fake-runner suite with:
 
 ```bash

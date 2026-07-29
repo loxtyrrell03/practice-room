@@ -69,6 +69,10 @@ tomorrow, updates meters/flags/memory), why-questions, instant restructuring
 ("I've got 2 hours" / pain → 48 h protocol), prescriptions from
 `context/prescriptions.md`, gate checklists on gate days. "What your coach
 remembers" panel shows `memory/MEMORY.md`. Quick-action chips for common asks.
+Definite add/drop instructions update the canonical active repertoire and
+recompute the whole remaining plan in one audited transaction; ambiguous,
+unknown, or incomplete requests clarify without mutation. Completed history is
+preserved and Desktop source PDFs are never edited.
 Accepted messages enter a durable FIFO before HTTP success; each has a stable
 ID, visible saved/processing/retrying state, one targeted coach turn and one
 deterministic reply. Prepared results and queued work recover after restart.
@@ -101,6 +105,7 @@ banner. Cache-busted assets (`?v=N` — bump on every deploy).
 - **`practice-room-data` (private):** all state and the coach's brain —
   `data/state.json` (dates, week outline, blocks, pieces), `data/chat.json`,
   `data/journal.json`, `data/spots.json`, `data/observations.json`,
+  `data/repertoire-changes.json`,
   `.coach-queue.json`, `.coach-results/`, `memory/MEMORY.md`, `context/`
   (plan with the authoritative 38-day timeline
   map, research verdicts, prescriptions, repertoire), `CLAUDE.md` (the coach's

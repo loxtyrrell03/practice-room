@@ -36,6 +36,16 @@ class QueueLogIntegrationTests(unittest.TestCase):
             )
             write_json(data / "data/chat.json", {"messages": []})
             write_json(data / "data/journal.json", {"entries": []})
+            write_json(
+                data / "data/repertoire-changes.json",
+                {"version": 1, "pending": [], "changes": []},
+            )
+            context_path = data / "context"
+            context_path.mkdir()
+            (context_path / "plan.md").write_text("# Plan\n", encoding="utf-8")
+            (context_path / "repertoire.md").write_text(
+                "# Repertoire\n", encoding="utf-8"
+            )
             memory_path = data / "memory/MEMORY.md"
             memory_path.parent.mkdir(parents=True)
             memory_path.write_text("# Memory\n", encoding="utf-8")

@@ -25,6 +25,9 @@ EDITABLE_FILES = (
     "data/spots.json",
     "data/observations.json",
     "data/observation-jobs.json",
+    "data/repertoire-changes.json",
+    "context/plan.md",
+    "context/repertoire.md",
     "memory/MEMORY.md",
 )
 
@@ -133,6 +136,91 @@ def _three_way(base, result, current):
 
     # If both sides deliberately changed the same scalar, the coach result wins.
     return copy.deepcopy(result)
+
+
+def _has_confirmed_repertoire_change(prepared):
+    change = prepared.get("files", {}).get("data/repertoire-changes.json")
+    if not change:
+        return False
+    try:
+        before = json.loads(change["base"]).get("changes", [])
+        after = json.loads(change["result"]).get("changes", [])
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+        return False
+    before_ids = {
+        item.get("id")
+        for item in before
+        if isinstance(item, dict) and item.get("id")
+    }
+    return any(
+        isinstance(item, dict)
+        and item.get("id") not in before_ids
+        and item.get("action") in {"add", "drop"}
+        and item.get("status") == "planned"
+        for item in after
+    )
+
+
+def _merge_repertoire_state(base, result, current):
+    """Keep live evidence without resurrecting superseded future planning."""
+    merged = _three_way(base, result, current)
+    if not all(
+        isinstance(item, dict) for item in (base, result, current, merged)
+    ):
+        return merged
+
+    result_piece_ids = {
+        piece.get("id")
+        for piece in result.get("pieces", [])
+        if isinstance(piece, dict) and piece.get("id")
+    }
+    merged["pieces"] = [
+        piece
+        for piece in merged.get("pieces", [])
+        if isinstance(piece, dict) and piece.get("id") in result_piece_ids
+    ]
+
+    # Confirmed replanning owns future summaries. Cold-test and programme
+    # evidence on retained pieces still comes from the general merge above.
+    for key in ("tomorrowPreview", "flags", "week"):
+        if key in result:
+            merged[key] = copy.deepcopy(result[key])
+
+    result_today = result.get("today")
+    merged_today = merged.get("today")
+    current_today = current.get("today")
+    if all(
+        isinstance(item, dict)
+        for item in (result_today, merged_today, current_today)
+    ):
+        if "focus" in result_today:
+            merged_today["focus"] = copy.deepcopy(result_today["focus"])
+        result_blocks = [
+            block
+            for block in result_today.get("blocks", [])
+            if isinstance(block, dict)
+        ]
+        merged_by_id = {
+            block.get("id"): block
+            for block in merged_today.get("blocks", [])
+            if isinstance(block, dict) and block.get("id")
+        }
+        planned_ids = {block.get("id") for block in result_blocks}
+        blocks = [
+            copy.deepcopy(merged_by_id.get(block.get("id"), block))
+            for block in result_blocks
+        ]
+        # A block completed while the coach was planning is historical
+        # evidence, even if the new repertoire no longer schedules it.
+        blocks.extend(
+            copy.deepcopy(block)
+            for block in current_today.get("blocks", [])
+            if isinstance(block, dict)
+            and block.get("id") not in planned_ids
+            and block.get("done") is True
+        )
+        merged_today["blocks"] = blocks
+    return merged
 
 
 class CoachQueue:
@@ -408,6 +496,7 @@ class CoachQueue:
                 return False
             result_path = self.data_dir / job["resultFile"]
             result = _read_json(result_path)
+            repertoire_changed = _has_confirmed_repertoire_change(result)
 
             for rel, change in result["files"].items():
                 path = self.data_dir / rel
@@ -417,11 +506,17 @@ class CoachQueue:
                 if _digest(current) == change["beforeHash"]:
                     merged = change["result"]
                 elif rel.endswith(".json"):
-                    merged_obj = _three_way(
-                        json.loads(change["base"]),
-                        json.loads(change["result"]),
-                        json.loads(current),
-                    )
+                    base_obj = json.loads(change["base"])
+                    result_obj = json.loads(change["result"])
+                    current_obj = json.loads(current)
+                    if rel == "data/state.json" and repertoire_changed:
+                        merged_obj = _merge_repertoire_state(
+                            base_obj, result_obj, current_obj
+                        )
+                    else:
+                        merged_obj = _three_way(
+                            base_obj, result_obj, current_obj
+                        )
                     merged = json.dumps(merged_obj, indent=2, ensure_ascii=False) + "\n"
                 else:
                     # The coach runners are serialized, so MEMORY.md cannot be

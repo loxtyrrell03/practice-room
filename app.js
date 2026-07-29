@@ -546,18 +546,22 @@ function renderProgramme(){
   state().pieces.forEach(p => {
     const div = document.createElement("div");
     const flag = FLAGS[p.attention] ? p.attention : null;
+    const hasSecurity = Number.isFinite(Number(p.security)) && p.security !== null;
+    const hasTempo = Number.isFinite(Number(p.tempoPct)) && p.tempoPct !== null;
+    const security = hasSecurity ? Number(p.security) : null;
     div.className = "piece" + (flag ? " f-" + flag : "");
     const lastCold = p.lastCold
       ? `${p.lastCold.result === "pass" ? "✓ passed" : "✕ broke down"} · ${p.lastCold.date}`
       : "not yet tested";
-    const level = p.security >= 85 ? "stage-ready" : p.security >= 65 ? "nearly there"
-                : p.security >= 40 ? "building" : "fragile";
+    const level = security === null ? "unmeasured"
+                : security >= 85 ? "stage-ready" : security >= 65 ? "nearly there"
+                : security >= 40 ? "building" : "fragile";
     div.innerHTML = `
       <div class="p-head"><h2></h2><span class="head-right">${flag ? `<span class="ftag f-${flag}">${FLAGS[flag]}</span>` : ""}<span class="p-tag">${level}</span></span></div>
-      <div class="meter"><i style="width:${Math.max(3,Math.min(100,p.security))}%"></i></div>
+      <div class="meter"><i style="width:${security === null ? 0 : Math.max(3,Math.min(100,security))}%"></i></div>
       <div class="p-row">
-        <span>security <b>${p.security}</b>/100</span>
-        <span>reliable tempo <b>${p.tempoPct}%</b> of target</span>
+        <span>security <b>${security === null ? "—" : security}</b>${security === null ? "" : "/100"}</span>
+        <span>reliable tempo <b>${hasTempo ? `${p.tempoPct}%` : "—"}</b>${hasTempo ? " of target" : ""}</span>
         <span>cold test: <b>${lastCold}</b></span>
       </div>
       <p class="p-note"></p><div class="spots"></div>`;

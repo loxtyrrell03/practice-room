@@ -27,6 +27,13 @@ from practice_logs import (
     atomic_write_json,
     atomic_write_text,
 )
+from repertoire_changes import (
+    LEDGER_REL,
+    PLAN_REL,
+    REPERTOIRE_REL,
+    RepertoireChangeManager,
+    render_repertoire_prompt,
+)
 
 
 HERE = Path(__file__).resolve().parent
@@ -249,6 +256,7 @@ after it; ignore them during this run. Append exactly one coach reply and do not
 rewrite chat history. The server attaches the durable reply ID and places the
 reply beside this target after validation.
 """
+        prompt += render_repertoire_prompt(job.get("repertoireDirective"))
     return prompt
 
 
@@ -260,7 +268,34 @@ def _run_staged_claude(stage, batch, job=None):
 class ClaudeCoachRunner:
     """Route observations and answer one queued message in an outer snapshot."""
 
+    def __init__(self, coach_run=None):
+        self.coach_run = coach_run or _run_staged_claude
+
     def __call__(self, stage, job):
+        repertoire = RepertoireChangeManager(stage)
+        directive = repertoire.prepare(job)
+        guarded_job = dict(job)
+        guarded_job["repertoireDirective"] = repertoire.public_directive(directive)
+        extra_outputs = {}
+
+        def run_guarded(inner_stage, batch):
+            ledger_before = (Path(inner_stage) / LEDGER_REL).read_text(
+                encoding="utf-8"
+            )
+            self.coach_run(inner_stage, batch, guarded_job)
+            ledger_after = (Path(inner_stage) / LEDGER_REL).read_text(
+                encoding="utf-8"
+            )
+            if ledger_after != ledger_before:
+                raise RuntimeError(
+                    "the coach changed the server-owned repertoire ledger"
+                )
+            if directive.get("kind") != "none":
+                for rel in (PLAN_REL, REPERTOIRE_REL):
+                    extra_outputs[rel] = (Path(inner_stage) / rel).read_text(
+                        encoding="utf-8"
+                    )
+
         staged_pipeline = ObservationPipeline(
             stage,
             daily_time=os.environ.get("COACH_DAILY_LOG_TIME", "20:30"),
@@ -268,7 +303,7 @@ class ClaudeCoachRunner:
         staged_pipeline.migrate()
         staged_pipeline.recover()
         result = staged_pipeline.process_for_coach(
-            lambda inner_stage, batch: _run_staged_claude(inner_stage, batch, job),
+            run_guarded,
             source_key=job["messageId"],
             is_debrief=job["text"].strip().lower().startswith("debrief"),
         )
@@ -278,6 +313,9 @@ class ClaudeCoachRunner:
             raise RuntimeError(
                 "coach batch was already marked processed without a reply"
             )
+        for rel, text in extra_outputs.items():
+            atomic_write_text(Path(stage) / rel, text)
+        repertoire.validate(directive)
 
 
 def queue_completed(_job_id):
@@ -355,9 +393,9 @@ class Handler(SimpleHTTPRequestHandler):
         if url.path == "/api/file":
             try:
                 rel = payload["path"]
-                if rel in {OBSERVATIONS_REL, JOBS_REL}:
+                if rel in {OBSERVATIONS_REL, JOBS_REL, LEDGER_REL}:
                     return self._json(
-                        409, {"error": "practice logs use the observation endpoint"}
+                        409, {"error": "that file is owned by a durable server workflow"}
                     )
                 with data_lock:
                     atomic_write_text(safe_path(rel), payload["content"])

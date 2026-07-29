@@ -57,6 +57,7 @@ class CoachQueueTests(unittest.TestCase):
         self.data = Path(self.temp.name) / "data-repo"
         (self.data / "data").mkdir(parents=True)
         (self.data / "memory").mkdir()
+        (self.data / "context").mkdir()
         fixtures = {
             "data/chat.json": {"messages": []},
             "data/state.json": {"startDate": "2026-07-29", "recitalDate": "2026-09-04"},
@@ -64,10 +65,19 @@ class CoachQueueTests(unittest.TestCase):
             "data/spots.json": {"spots": []},
             "data/observations.json": {"obs": []},
             "data/observation-jobs.json": {"version": 1, "batches": {}},
+            "data/repertoire-changes.json": {
+                "version": 1,
+                "pending": [],
+                "changes": [],
+            },
         }
         for rel, value in fixtures.items():
             (self.data / rel).write_text(json.dumps(value, indent=2) + "\n", encoding="utf-8")
         (self.data / "memory/MEMORY.md").write_text("# Memory\n", encoding="utf-8")
+        (self.data / "context/plan.md").write_text("# Plan\n", encoding="utf-8")
+        (self.data / "context/repertoire.md").write_text(
+            "# Repertoire\n", encoding="utf-8"
+        )
 
     def tearDown(self):
         self.temp.cleanup()
@@ -251,6 +261,117 @@ class CoachQueueTests(unittest.TestCase):
         merged = json.loads((self.data / "data/state.json").read_text(encoding="utf-8"))
         self.assertEqual(merged["streak"], 7)
         self.assertEqual(merged["tomorrowPreview"], "coach update")
+
+    def test_confirmed_drop_cannot_resurrect_concurrently_edited_future_block(self):
+        runner_started = threading.Event()
+        release_runner = threading.Event()
+        state_path = self.data / "data/state.json"
+        state_path.write_text(
+            json.dumps(
+                {
+                    "startDate": "2026-07-29",
+                    "recitalDate": "2026-09-04",
+                    "pieces": [
+                        {"id": "alpha", "title": "Alpha", "short": "Alpha"},
+                        {"id": "beta", "title": "Beta", "short": "Beta"},
+                    ],
+                    "today": {
+                        "focus": "Alpha",
+                        "blocks": [
+                            {
+                                "id": "alpha-next",
+                                "title": "Alpha repair",
+                                "done": False,
+                            },
+                            {
+                                "id": "beta-next",
+                                "title": "Beta repair",
+                                "done": False,
+                            },
+                        ],
+                    },
+                    "tomorrowPreview": "Alpha and Beta",
+                    "flags": [],
+                    "week": {
+                        "goals": ["Alpha", "Beta"],
+                        "gate": ["Alpha", "Beta"],
+                    },
+                },
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        def runner(stage, job):
+            staged_state_path = Path(stage) / "data/state.json"
+            staged = json.loads(staged_state_path.read_text(encoding="utf-8"))
+            staged["pieces"] = [
+                piece for piece in staged["pieces"] if piece["id"] != "alpha"
+            ]
+            staged["today"]["focus"] = "Beta"
+            staged["today"]["blocks"] = [
+                block
+                for block in staged["today"]["blocks"]
+                if block["id"] != "alpha-next"
+            ]
+            staged["tomorrowPreview"] = "Beta"
+            staged["week"] = {"goals": ["Beta"], "gate": ["Beta"]}
+            staged_state_path.write_text(
+                json.dumps(staged, indent=2) + "\n", encoding="utf-8"
+            )
+            ledger_path = Path(stage) / "data/repertoire-changes.json"
+            ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
+            ledger["changes"].append(
+                {
+                    "id": "drop-alpha",
+                    "action": "drop",
+                    "status": "planned",
+                    "pieceId": "alpha",
+                }
+            )
+            ledger_path.write_text(
+                json.dumps(ledger, indent=2) + "\n", encoding="utf-8"
+            )
+            chat_path = Path(stage) / "data/chat.json"
+            chat = json.loads(chat_path.read_text(encoding="utf-8"))
+            chat["messages"].append(
+                {
+                    "role": "coach",
+                    "ts": job["acceptedAt"],
+                    "text": "Alpha removed.",
+                }
+            )
+            chat_path.write_text(
+                json.dumps(chat, indent=2) + "\n", encoding="utf-8"
+            )
+            runner_started.set()
+            release_runner.wait(5)
+
+        queue = CoachQueue(self.data, runner, retry_base_seconds=0)
+        queue.start()
+        try:
+            queue.accept("drop Alpha", "drop-alpha-request")
+            self.assertTrue(runner_started.wait(2))
+            live = json.loads(state_path.read_text(encoding="utf-8"))
+            live["today"]["blocks"][0]["detail"] = "edited on phone"
+            state_path.write_text(
+                json.dumps(live, indent=2) + "\n", encoding="utf-8"
+            )
+            release_runner.set()
+            self.assertTrue(queue.wait_idle(5))
+        finally:
+            release_runner.set()
+            queue.stop()
+
+        final = json.loads(state_path.read_text(encoding="utf-8"))
+        self.assertEqual([piece["id"] for piece in final["pieces"]], ["beta"])
+        self.assertEqual(
+            [block["id"] for block in final["today"]["blocks"]], ["beta-next"]
+        )
+        self.assertEqual(
+            final["week"], {"goals": ["Beta"], "gate": ["Beta"]}
+        )
 
     def test_queue_first_acceptance_recovers_transient_chat_write_failure(self):
         runner = FakeRunner()

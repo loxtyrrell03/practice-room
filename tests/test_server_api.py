@@ -80,7 +80,19 @@ class ObservationApiTests(unittest.TestCase):
             {"path": "data/observations.json", "content": '{"obs":[]}\n'},
         )
         self.assertEqual(409, status)
-        self.assertIn("observation endpoint", result["error"])
+        self.assertIn("durable server workflow", result["error"])
+
+    def test_generic_file_endpoint_cannot_overwrite_repertoire_audit(self):
+        status, result = self.request(
+            "POST",
+            "/api/file",
+            {
+                "path": "data/repertoire-changes.json",
+                "content": '{"version":1,"pending":[],"changes":[]}\n',
+            },
+        )
+        self.assertEqual(409, status)
+        self.assertIn("durable server workflow", result["error"])
 
 
 if __name__ == "__main__":
