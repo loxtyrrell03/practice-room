@@ -77,8 +77,9 @@ effects. Daily routing never fabricates chat, a debrief or a journal entry;
 general notes remain available for acknowledgement at the next real debrief.
 
 **Programme view** — per piece: security meter (0–100, evidence-driven),
-reliable-tempo %, last cold result, attention tag, coach's one-line status, and
-the piece's **open spots** (bar + issue + date + status).
+reliable-tempo %, last cold result, attention tag, 2–4 short status bullets
+with bold plain-language leads, and the piece's **open spots** (bar + issue +
+date + status). Long status paragraphs are not permitted.
 
 **Coach chat** — debriefs (asks 2–3 questions, writes the journal, rebuilds
 tomorrow, updates meters/flags/memory), why-questions, instant restructuring

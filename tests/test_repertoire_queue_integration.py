@@ -4,6 +4,7 @@ import unittest
 from pathlib import Path
 
 from coach_queue import CoachQueue
+from day_plans import local_date_from_iso
 from server import ClaudeCoachRunner
 
 
@@ -108,7 +109,9 @@ class RepertoireQueueIntegrationTests(unittest.TestCase):
                     "# Repertoire\nBeta\n", encoding="utf-8"
                 )
                 (Path(stage) / "memory/MEMORY.md").write_text(
-                    "# Memory\n- 2026-07-29: Alpha dropped.\n",
+                    "# Memory\n- "
+                    + local_date_from_iso(job["acceptedAt"])
+                    + ": Alpha dropped.\n",
                     encoding="utf-8",
                 )
                 chat_path = Path(stage) / "data/chat.json"
@@ -128,7 +131,9 @@ class RepertoireQueueIntegrationTests(unittest.TestCase):
                 retry_base_seconds=0,
             )
             queue.accept("I'm dropping Alpha.", "drop-alpha")
-            queue.drain_until_idle(ignore_retry_time=True)
+            queue.drain_until_idle(ignore_retry_time=True, max_steps=1)
+            queued = queue.snapshot()["jobs"][0]
+            self.assertEqual("done", queued["state"], queued["lastError"])
 
             state = json.loads(
                 (data / "data/state.json").read_text(encoding="utf-8")

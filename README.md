@@ -6,6 +6,9 @@ blocks have built-in timers, piece security meters and a coach (Claude, via the
 Claude CLI) that knows the whole plan, remembers what you tell it, and rebuilds
 tomorrow around how today actually went.
 
+Programme statuses use 2–4 short, labelled bullets so the current work and next
+checkpoint can be scanned at the piano instead of read as a dense paragraph.
+
 Today and tomorrow are separate dated records. The active `state.today` plan
 cannot be advanced early; the coach writes future work to `data/day-plans.json`,
 and the server promotes a ready plan only when that Europe/London date begins.

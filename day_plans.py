@@ -220,10 +220,15 @@ def validate_coach_day_change(
     target_date = local_date_from_iso(job.get("acceptedAt"))
     before_today = str((before_state.get("today") or {}).get("date") or "")
     after_today = str((after_state.get("today") or {}).get("date") or "")
-    if after_today > target_date:
+    if before_today <= target_date and after_today > target_date:
         raise DayPlanError(
             "the coach put a future plan into state.today; write it to "
             "data/day-plans.json instead"
+        )
+    if before_today > target_date and after_today != before_today:
+        raise DayPlanError(
+            "the active day advanced while an older queued coach turn was "
+            "retrying; its date cannot be changed"
         )
     if before_today == target_date and after_today != before_today:
         raise DayPlanError(

@@ -641,6 +641,18 @@ function renderInstructionSteps(root, steps){
   root.appendChild(list);
 }
 
+function renderProgrammeStatus(root, piece){
+  const points = Array.isArray(piece.statusPoints)
+    ? piece.statusPoints.filter(point => point && point.lead && point.text)
+    : [];
+  if (!points.length){
+    root.textContent = piece.note || "";
+    return;
+  }
+  renderInstructionSteps(root, points);
+  root.querySelector(".instruction-list")?.classList.add("programme-points");
+}
+
 function renderDeferredLogs(panel, deferredLogs){
   if (!deferredLogs.length) return;
   const section = panel.querySelector(".deferred-evidence");
@@ -1200,9 +1212,9 @@ function renderProgramme(){
         <span>reliable tempo <b>${hasTempo ? `${p.tempoPct}%` : "—"}</b>${hasTempo ? " of target" : ""}</span>
         <span>cold test: <b>${lastCold}</b></span>
       </div>
-      <p class="p-note"></p><div class="spots"></div>`;
+      <div class="p-note"></div><div class="spots"></div>`;
     div.querySelector("h2").textContent = p.title;
-    div.querySelector(".p-note").textContent = p.note || "";
+    renderProgrammeStatus(div.querySelector(".p-note"), p);
     const spotBox = div.querySelector(".spots");
     const all = ((docs[FILES.spots] || {obj:{spots:[]}}).obj.spots || []).filter(sp => sp.piece === p.id);
     const open = all.filter(sp => sp.status !== "fixed");

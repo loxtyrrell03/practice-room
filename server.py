@@ -38,6 +38,7 @@ from practice_logs import (
     atomic_write_json,
     atomic_write_text,
 )
+from programme_status import validate_programme_statuses
 from repertoire_changes import (
     LEDGER_REL,
     PLAN_REL,
@@ -581,9 +582,11 @@ class ClaudeCoachRunner:
                 raise RuntimeError(
                     "the coach changed the server-owned repertoire ledger"
                 )
+            state_after = json.loads(state_path.read_text(encoding="utf-8"))
+            validate_programme_statuses(state_after)
             validate_coach_day_change(
                 before_state=state_before,
-                after_state=json.loads(state_path.read_text(encoding="utf-8")),
+                after_state=state_after,
                 before_plans=plans_before,
                 after_plans=read_day_plan_json(
                     day_plans_path, empty_day_plans()

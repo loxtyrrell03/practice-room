@@ -82,6 +82,39 @@ class DayPlanTests(unittest.TestCase):
                 batch={"routeObservationIds": [], "reviewObservationIds": []},
             )
 
+    def test_queued_tomorrow_edit_can_finish_after_that_date_activates(self):
+        before_state = {
+            "today": {"date": "2026-07-30", "focus": "Original", "blocks": []}
+        }
+        after_state = {
+            "today": {"date": "2026-07-30", "focus": "Corrected", "blocks": []}
+        }
+        validate_coach_day_change(
+            before_state=before_state,
+            after_state=after_state,
+            before_plans={"version": 1, "plans": []},
+            after_plans={"version": 1, "plans": []},
+            job={"acceptedAt": "2026-07-29T22:10:36Z"},
+            batch={"routeObservationIds": [], "reviewObservationIds": []},
+        )
+
+    def test_older_queued_turn_cannot_advance_the_already_active_date(self):
+        before_state = {
+            "today": {"date": "2026-07-30", "focus": "Day 2", "blocks": []}
+        }
+        after_state = {
+            "today": {"date": "2026-07-31", "focus": "Day 3", "blocks": []}
+        }
+        with self.assertRaisesRegex(DayPlanError, "older queued coach turn"):
+            validate_coach_day_change(
+                before_state=before_state,
+                after_state=after_state,
+                before_plans={"version": 1, "plans": []},
+                after_plans={"version": 1, "plans": []},
+                job={"acceptedAt": "2026-07-29T22:10:36Z"},
+                batch={"routeObservationIds": [], "reviewObservationIds": []},
+            )
+
     def test_new_ready_plan_must_account_for_every_named_log(self):
         with self.assertRaisesRegex(DayPlanError, "obs-2"):
             validate_coach_day_change(

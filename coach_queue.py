@@ -503,11 +503,14 @@ class CoachQueue:
         after_chat = _read_json(stage / "data/chat.json")
         before_messages = before_chat.get("messages", [])
         after_messages = after_chat.get("messages", [])
-        if after_messages[: len(before_messages)] != before_messages or len(after_messages) != len(before_messages) + 1:
-            raise RuntimeError("coach must append exactly one reply without rewriting chat history")
+        if len(after_messages) != len(before_messages) + 1:
+            raise RuntimeError("coach must append exactly one reply")
         reply = after_messages[-1]
         if reply.get("role") != "coach" or not str(reply.get("text", "")).strip():
             raise RuntimeError("coach did not append a valid reply")
+        # Only the new reply is ever carried into the prepared transaction.
+        # Any incidental rewrite of older staged messages is discarded, so
+        # the live append-only history remains byte-for-byte canonical.
         reply = dict(reply)
         reply["id"] = f"reply-{job['id']}"
         reply["replyTo"] = job["messageId"]

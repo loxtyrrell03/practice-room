@@ -192,6 +192,9 @@ body.focusing{overflow:hidden}
 .p-row{display:flex;gap:18px;flex-wrap:wrap;color:var(--ink2);font-size:.9rem;margin-top:6px}
 .p-row b{color:var(--ink)}
 .p-note{color:var(--ink2);font-size:.95rem;margin-top:10px}
+.p-note .programme-points{gap:7px;margin-top:0}
+.p-note .programme-points li{font-size:.9rem;line-height:1.48;padding-left:14px}
+.p-note .programme-points li::before{width:4px;height:4px}
 
 .spots{margin-top:12px;display:flex;flex-direction:column;gap:6px}
 .spot{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 14px;

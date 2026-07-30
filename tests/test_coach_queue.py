@@ -196,6 +196,33 @@ class CoachQueueTests(unittest.TestCase):
         )
         self.assertEqual(queue.snapshot()["pending"], 0)
 
+    def test_staged_history_rewrites_are_discarded_while_reply_is_kept(self):
+        def runner(stage, job):
+            chat_path = Path(stage) / "data/chat.json"
+            chat = json.loads(chat_path.read_text(encoding="utf-8"))
+            original_count = len(chat["messages"])
+            chat["messages"][0]["text"] = "coach tried to rewrite history"
+            chat["messages"].append(
+                {
+                    "role": "coach",
+                    "ts": job["acceptedAt"],
+                    "text": "The new reply.",
+                }
+            )
+            self.assertEqual(len(chat["messages"]), original_count + 1)
+            chat_path.write_text(
+                json.dumps(chat, indent=2) + "\n", encoding="utf-8"
+            )
+
+        queue = CoachQueue(self.data, runner, retry_base_seconds=0)
+        queue.accept("Keep history canonical", "rewrite-discarded")
+        queue.drain_until_idle(ignore_retry_time=True)
+
+        messages = self.messages()
+        self.assertEqual(messages[0]["text"], "Keep history canonical")
+        self.assertEqual(messages[-1]["text"], "The new reply.")
+        self.assertEqual(queue.snapshot()["pending"], 0)
+
     def test_processing_job_is_recovered_after_restart(self):
         runner = FakeRunner()
         queue = CoachQueue(self.data, runner, retry_base_seconds=0)
