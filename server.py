@@ -57,6 +57,7 @@ HERE = Path(__file__).resolve().parent
 DATA = HERE / "data-repo"
 PORT = 8977
 MODEL = os.environ.get("COACH_MODEL", "claude-opus-5")
+CODEX_TIMEOUT_SECONDS = int(os.environ.get("CODEX_TIMEOUT_SECONDS", "1800"))
 PHONE_URL = "https://lox.tail89d19b.ts.net:10000/"
 SESSION_FILE = HERE / ".coach-session.json"
 if os.name == "nt":
@@ -552,9 +553,10 @@ def run_codex(
     coach_prompt = f"""PRACTICE ROOM CODEX RUNTIME
 
 This is an execution task, not a request to acknowledge or summarize instructions.
-Complete the entire server batch below in this one turn. Read and obey CLAUDE.md
-as the authoritative coach contract, then use your file tools to make every
-warranted edit in the current working directory. Do not use subagents. The outer
+Complete the entire server batch below in this one turn. Read and obey AGENTS.md,
+which delegates to CLAUDE.md as the authoritative shared coach contract, then use
+your file tools to make every warranted edit in the current working directory.
+Do not use subagents. The outer
 server ignores your final prose and validates the files, so a text-only answer
 always fails.
 
@@ -571,7 +573,6 @@ describing a plan, or acknowledging CLAUDE.md.
         codex,
         "exec",
         "--ignore-user-config",
-        "--ignore-rules",
         "--dangerously-bypass-approvals-and-sandbox",
         "--skip-git-repo-check",
         "-C",
@@ -595,7 +596,7 @@ describing a plan, or acknowledging CLAUDE.md.
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
-                timeout=900,
+                timeout=CODEX_TIMEOUT_SECONDS,
                 shell=(os.name == "nt"),
                 creationflags=HIDDEN_SUBPROCESS_FLAGS,
                 startupinfo=HIDDEN_SUBPROCESS_STARTUPINFO,

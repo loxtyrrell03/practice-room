@@ -83,8 +83,14 @@ class WindowlessSubprocessTests(unittest.TestCase):
         command = run.call_args.args[0]
         self.assertIn("gpt-5.6-terra", command)
         self.assertIn('model_reasoning_effort="xhigh"', command)
+        self.assertNotIn("--ignore-rules", command)
         self.assertEqual("-", command[-1])
-        self.assertIn("Read and obey CLAUDE.md", run.call_args.kwargs["input"])
+        self.assertIn("Read and obey AGENTS.md", run.call_args.kwargs["input"])
+        self.assertIn("delegates to CLAUDE.md", run.call_args.kwargs["input"])
+        self.assertEqual(
+            server.CODEX_TIMEOUT_SECONDS,
+            run.call_args.kwargs["timeout"],
+        )
         self.assertEqual(
             server.HIDDEN_SUBPROCESS_FLAGS,
             run.call_args.kwargs["creationflags"],
