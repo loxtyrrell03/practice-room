@@ -98,11 +98,13 @@ that the local coach still owns.
 
 **Journal** — entries written by the coach from debriefs, newest first.
 
-**Coach runtime** — Claude CLI, **Opus 5, medium thinking budget**
-(`MAX_THINKING_TOKENS=10000`); locally it **resumes a persistent session**
-(`.coach-session.json`, weekly rotation, fallback to fresh) so conversation
-context carries across messages; the full transcript + memory file cover
-continuity across sessions and devices.
+**Coach runtime** — every accepted message durably records its selected provider,
+model and reasoning level. The composer offers GPT-5.6 Sol/Terra/Luna through
+the local Codex CLI and Claude Fable 5/Opus 5/Sonnet 5/Haiku 4.5 through the
+local Claude CLI. Claude locally resumes a persistent session
+(`.coach-session.json`, weekly rotation, fallback to fresh); Codex starts from
+the complete transcript, memory and coach contract in the isolated transaction
+snapshot. Retries never silently change the selected model.
 
 **Memory & freshness** — `memory/MEMORY.md` updated after every conversation
 (facts, decisions, PTs, trajectory — curated, dated, <120 lines). Freshness

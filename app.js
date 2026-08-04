@@ -20,6 +20,8 @@ let pollTimer = null;
 let currentView = "today";
 let coachQueue = {pending:0, processing:0, failed:0, jobs:[]};
 let coachActivity = {};
+let coachModels = [];
+let coachSelection = {provider:"openai", model:"gpt-5.6-sol", effort:"high"};
 const expandedActivities = new Set();
 const phaseOpenState = new Map();
 let selectedPlanDay = null;
@@ -56,6 +58,7 @@ window.addEventListener("DOMContentLoaded", async () => {
     cfg = { name: m.name || "you", practiceLogs: m.practiceLogs || null };
     coachQueue = m.coachQueue || coachQueue;
     coachActivity = m.coachActivity || {};
+    configureCoachModels(m);
     return start();
   } catch {
     if (location.origin !== PRIVATE_ORIGIN) location.replace(PRIVATE_ORIGIN + "/");
@@ -75,6 +78,7 @@ function wireChrome(){
     btn.addEventListener("click", () => switchView(btn.dataset.view)));
   $("refreshBtn").addEventListener("click", () => start());
   $("send").addEventListener("click", sendMessage);
+  wireModelPicker();
   $("input").addEventListener("keydown", e => {
     if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) sendMessage();
   });
@@ -1246,6 +1250,135 @@ function renderCoach(){
   scrollThread();
 }
 
+function configureCoachModels(meta){
+  coachModels = Array.isArray(meta.coachModels) ? meta.coachModels : [];
+  const fallback = meta.defaultCoachSelection || coachSelection;
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem("practice-room-coach-model")); } catch {}
+  coachSelection = validCoachSelection(saved) || validCoachSelection(fallback) || coachSelection;
+  renderModelPicker();
+}
+
+function validCoachSelection(value){
+  if (!value || typeof value !== "object") return null;
+  const model = coachModels.find(item => item.provider === value.provider && item.id === value.model);
+  if (!model) return null;
+  const effort = model.efforts.includes(value.effort) ? value.effort : model.defaultEffort;
+  return {provider:model.provider, model:model.id, effort};
+}
+
+function selectedCoachModel(selection=coachSelection){
+  return coachModels.find(item => item.provider === selection.provider && item.id === selection.model) || null;
+}
+
+function modelMark(provider){ return provider === "anthropic" ? "CL" : "GPT"; }
+
+function effortLabel(effort){
+  return effort === "xhigh" ? "X-high" : effort.charAt(0).toUpperCase() + effort.slice(1);
+}
+
+function formatCoachSelection(selection){
+  const model = selectedCoachModel(selection || {});
+  if (model) return `${model.label} · ${effortLabel(selection.effort)}`;
+  return selection && selection.model ? `${selection.model} · ${selection.effort || "default"}` : "coach model";
+}
+
+function wireModelPicker(){
+  $("modelTrigger").addEventListener("click", event => {
+    event.stopPropagation();
+    setModelMenu($("modelMenu").hidden);
+  });
+  $("modelMenuClose").addEventListener("click", () => setModelMenu(false));
+  document.addEventListener("pointerdown", event => {
+    if (!$("modelMenu").hidden && !$("composer").contains(event.target)) setModelMenu(false);
+  });
+  document.addEventListener("keydown", event => {
+    if (event.key === "Escape" && !$("modelMenu").hidden) setModelMenu(false);
+  });
+}
+
+function setModelMenu(open){
+  $("modelMenu").hidden = !open;
+  $("modelTrigger").setAttribute("aria-expanded", String(open));
+}
+
+function chooseCoachModel(model){
+  const effort = model.efforts.includes(coachSelection.effort)
+    ? coachSelection.effort : model.defaultEffort;
+  coachSelection = {provider:model.provider, model:model.id, effort};
+  saveCoachSelection();
+  renderModelPicker();
+}
+
+function chooseCoachEffort(effort){
+  const model = selectedCoachModel();
+  if (!model || !model.efforts.includes(effort)) return;
+  coachSelection = {...coachSelection, effort};
+  saveCoachSelection();
+  renderModelPicker();
+}
+
+function saveCoachSelection(){
+  try { localStorage.setItem("practice-room-coach-model", JSON.stringify(coachSelection)); } catch {}
+}
+
+function renderModelPicker(){
+  const selected = selectedCoachModel();
+  if (!selected) return;
+  $("modelProviderMark").textContent = modelMark(selected.provider);
+  $("modelProviderMark").classList.toggle("anthropic", selected.provider === "anthropic");
+  $("modelTriggerName").textContent = selected.label;
+  $("modelTriggerEffort").textContent = effortLabel(coachSelection.effort);
+
+  const list = $("modelMenuList");
+  list.innerHTML = "";
+  [...new Set(coachModels.map(model => model.provider))].forEach(provider => {
+    const models = coachModels.filter(model => model.provider === provider);
+    const label = document.createElement("div");
+    label.className = "model-group-label";
+    label.textContent = models[0].providerLabel;
+    list.appendChild(label);
+    models.forEach(model => {
+      const button = document.createElement("button");
+      const active = model.provider === coachSelection.provider && model.id === coachSelection.model;
+      button.type = "button";
+      button.className = "model-option" + (active ? " selected" : "");
+      button.setAttribute("aria-pressed", String(active));
+      const mark = document.createElement("span");
+      mark.className = "model-option-mark" + (model.provider === "anthropic" ? " anthropic" : "");
+      mark.textContent = modelMark(model.provider);
+      const copy = document.createElement("span");
+      copy.className = "model-option-copy";
+      const name = document.createElement("strong");
+      name.textContent = model.label;
+      const description = document.createElement("span");
+      description.textContent = model.description;
+      copy.append(name, description);
+      const check = document.createElement("span");
+      check.className = "model-option-check";
+      check.textContent = "✓";
+      button.append(mark, copy, check);
+      button.addEventListener("click", () => chooseCoachModel(model));
+      list.appendChild(button);
+    });
+  });
+
+  $("reasoningHint").textContent = selected.provider === "anthropic"
+    ? "adaptive effort" : "quality · speed";
+  const options = $("reasoningOptions");
+  options.innerHTML = "";
+  selected.efforts.forEach(effort => {
+    const button = document.createElement("button");
+    const active = effort === coachSelection.effort;
+    button.type = "button";
+    button.className = "reasoning-option" + (active ? " selected" : "");
+    button.textContent = effortLabel(effort);
+    button.setAttribute("aria-pressed", String(active));
+    button.addEventListener("click", () => chooseCoachEffort(effort));
+    options.appendChild(button);
+  });
+}
+
 function bubble(m){
   const d = document.createElement("div");
   d.className = "msg " + (m.role === "user" ? "user" : "coach");
@@ -1273,6 +1406,12 @@ function bubble(m){
           status.textContent = `✓ saved · waiting${job.position ? ` · #${job.position}` : ""}`;
         }
         row.appendChild(status);
+      }
+      if (job.selection){
+        const model = document.createElement("span");
+        model.className = "queue-model";
+        model.textContent = formatCoachSelection(job.selection);
+        row.appendChild(model);
       }
       if (activity && (activity.events || []).length){
         const toggle = document.createElement("button");
@@ -1376,11 +1515,13 @@ async function sendMessage(){
   try {
     let outbox = null;
     try { outbox = JSON.parse(localStorage.getItem("practice-room-chat-outbox")); } catch {}
-    const requestId = outbox && outbox.text === text ? outbox.requestId :
+    const sameSelection = outbox && JSON.stringify(outbox.selection) === JSON.stringify(coachSelection);
+    const requestId = outbox && outbox.text === text && sameSelection ? outbox.requestId :
       (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`);
-    try { localStorage.setItem("practice-room-chat-outbox", JSON.stringify({requestId, text})); } catch {}
+    const selection = {...coachSelection};
+    try { localStorage.setItem("practice-room-chat-outbox", JSON.stringify({requestId, text, selection})); } catch {}
     const r = await fetch("/api/chat", { method:"POST", headers:{"Content-Type":"application/json"},
-      body: JSON.stringify({ text, requestId }) });
+      body: JSON.stringify({ text, requestId, selection }) });
     if (!r.ok) throw new Error("Couldn't reach the coach — is the laptop awake?");
     const accepted = await r.json();
     const message = accepted.job.message;

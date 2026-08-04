@@ -127,6 +127,35 @@ class CoachQueueTests(unittest.TestCase):
         replies = [m for m in self.messages() if m["role"] == "coach"]
         self.assertEqual([m["text"] for m in replies], [f"reply to message {i}" for i in range(12)])
 
+    def test_model_selection_is_durable_and_idempotent(self):
+        queue = CoachQueue(self.data, FakeRunner(), retry_base_seconds=0)
+        selection = {
+            "provider": "openai",
+            "model": "gpt-5.6-terra",
+            "effort": "xhigh",
+        }
+        first = queue.accept("Use this model", "model-request", selection)
+        again = queue.accept("Use this model", "model-request", selection)
+
+        self.assertEqual(selection, first["selection"])
+        self.assertEqual(first["id"], again["id"])
+        with self.assertRaisesRegex(ValueError, "different model"):
+            queue.accept(
+                "Use this model",
+                "model-request",
+                {**selection, "effort": "low"},
+            )
+
+    def test_rejects_unsupported_model_before_durable_acceptance(self):
+        queue = CoachQueue(self.data, FakeRunner(), retry_base_seconds=0)
+        with self.assertRaisesRegex(ValueError, "unsupported coach model"):
+            queue.accept(
+                "unknown",
+                "unknown-model",
+                {"provider": "openai", "model": "invented", "effort": "high"},
+            )
+        self.assertEqual([], queue.snapshot()["jobs"])
+
     def test_weekly_plan_update_is_committed_with_coach_reply(self):
         def runner(stage, job):
             plan_path = Path(stage) / "data/weekly-plan.json"

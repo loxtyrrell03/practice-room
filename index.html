@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="app.css?v=26">
+<link rel="stylesheet" href="app.css?v=28">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎹</text></svg>">
 </head>
 <body>
@@ -138,9 +138,28 @@
         <button class="chip q" data-q="I only have limited time today — restructure the day for me. I have: ">Short on time</button>
         <button class="chip q" data-q="Why am I practising this the way the plan says? Explain: ">Why?</button>
       </div>
-      <div class="composer">
+      <div class="composer" id="composer">
         <textarea id="input" rows="2" placeholder="Tell your coach how it went, or ask anything…"></textarea>
-        <button class="btn primary send" id="send">Send</button>
+        <div class="composer-footer">
+          <button class="model-trigger" id="modelTrigger" type="button" aria-haspopup="dialog" aria-expanded="false">
+            <span class="model-provider-mark" id="modelProviderMark">GPT</span>
+            <span class="model-trigger-name" id="modelTriggerName">GPT-5.6 Sol</span>
+            <span class="model-trigger-effort" id="modelTriggerEffort">high</span>
+            <span class="model-chevron" aria-hidden="true">⌃</span>
+          </button>
+          <button class="btn primary send" id="send">Send <span aria-hidden="true">↗</span></button>
+        </div>
+        <div class="model-menu" id="modelMenu" role="dialog" aria-label="Choose coach model" hidden>
+          <div class="model-menu-head">
+            <div><strong>Coach model</strong><span>Applied to your next message</span></div>
+            <button id="modelMenuClose" type="button" aria-label="Close model picker">×</button>
+          </div>
+          <div class="model-menu-list" id="modelMenuList"></div>
+          <div class="reasoning-picker">
+            <div class="reasoning-copy"><strong>Reasoning</strong><span id="reasoningHint"></span></div>
+            <div class="reasoning-options" id="reasoningOptions" role="group" aria-label="Reasoning level"></div>
+          </div>
+        </div>
       </div>
     </div>
   </section>
@@ -160,6 +179,6 @@
 
 </div>
 
-<script src="app.js?v=26"></script>
+<script src="app.js?v=28"></script>
 </body>
 </html>

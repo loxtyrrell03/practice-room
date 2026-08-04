@@ -17,6 +17,8 @@ import time
 import uuid
 from pathlib import Path
 
+from coach_models import LEGACY_SELECTION, normalize_selection
+
 
 EDITABLE_FILES = (
     "data/chat.json",
@@ -325,13 +327,14 @@ class CoachQueue:
         if self._thread:
             self._thread.join(timeout)
 
-    def accept(self, text, request_id=None):
+    def accept(self, text, request_id=None, selection=None):
         text = (text or "").strip()
         if not text:
             raise ValueError("empty")
         request_id = (request_id or "").strip() or str(uuid.uuid4())
         if len(request_id) > 200:
             raise ValueError("requestId is too long")
+        selection = normalize_selection(selection)
         durable = False
         try:
             with self.lock:
@@ -344,6 +347,12 @@ class CoachQueue:
                     if existing["text"] != text:
                         raise ValueError(
                             "requestId was already used for a different message"
+                        )
+                    if normalize_selection(
+                        existing.get("selection"), default=LEGACY_SELECTION
+                    ) != selection:
+                        raise ValueError(
+                            "requestId was already used with a different model"
                         )
                     durable = True
                     self._ensure_user_message(existing)
@@ -358,6 +367,7 @@ class CoachQueue:
                         "requestId": request_id,
                         "messageId": f"message-{job_id}",
                         "text": text,
+                        "selection": selection,
                         "acceptedAt": accepted,
                         "sequence": sequence,
                         "state": "queued",
@@ -749,6 +759,11 @@ class CoachQueue:
         queue.setdefault("version", 1)
         queue.setdefault("nextSequence", 1)
         queue.setdefault("jobs", [])
+        for job in queue["jobs"]:
+            if "selection" not in job:
+                job["selection"] = normalize_selection(
+                    None, default=LEGACY_SELECTION
+                )
         return queue
 
     def _save_queue(self, queue):
@@ -774,6 +789,9 @@ class CoachQueue:
             "state": job["state"],
             "position": position,
             "attempts": job["attempts"],
+            "selection": normalize_selection(
+                job.get("selection"), default=LEGACY_SELECTION
+            ),
             "lastError": job.get("lastError"),
             "acceptedAt": job["acceptedAt"],
             "completedAt": job.get("completedAt"),

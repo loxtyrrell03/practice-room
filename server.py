@@ -22,6 +22,11 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from coach_queue import CoachQueue
+from coach_models import (
+    DEFAULT_SELECTION,
+    normalize_selection,
+    public_catalog,
+)
 from day_plans import (
     DAY_PLANS_REL,
     empty_day_plans,
@@ -52,7 +57,6 @@ HERE = Path(__file__).resolve().parent
 DATA = HERE / "data-repo"
 PORT = 8977
 MODEL = os.environ.get("COACH_MODEL", "claude-opus-5")
-os.environ.setdefault("MAX_THINKING_TOKENS", "10000")  # medium reasoning
 PHONE_URL = "https://lox.tail89d19b.ts.net:10000/"
 SESSION_FILE = HERE / ".coach-session.json"
 if os.name == "nt":
@@ -188,6 +192,17 @@ def save_session(session_id):
             else time.time()
         )
         atomic_write_json(SESSION_FILE, {"id": session_id, "created": created})
+    except Exception:
+        pass
+
+
+def clear_session(session_id=None):
+    try:
+        if session_id:
+            current = json.loads(SESSION_FILE.read_text(encoding="utf-8"))
+            if current.get("id") != session_id:
+                return
+        SESSION_FILE.unlink(missing_ok=True)
     except Exception:
         pass
 
@@ -399,9 +414,34 @@ def promote_calendar_plan():
     return result
 
 
-def run_claude(repo, prompt, source, activity_id=None):
+def _cli_error(result):
+    streams = [result.stdout or "", result.stderr or ""]
+    for stream in streams:
+        for line in reversed(stream.splitlines()):
+            try:
+                row = json.loads(line)
+            except (TypeError, json.JSONDecodeError):
+                continue
+            message = row.get("result") or row.get("error")
+            if message:
+                status = row.get("api_error_status")
+                return f"{message}{f' (HTTP {status})' if status else ''}"
+    detail = result.stderr or result.stdout or f"coach exit {result.returncode}"
+    return detail.strip()[:1000]
+
+
+def run_claude(
+    repo,
+    prompt,
+    source,
+    activity_id=None,
+    *,
+    model=None,
+    effort="medium",
+):
     """Run one CLI turn. Transaction ordering is owned by the caller."""
     claude = shutil.which("claude") or "claude"
+    model = model or MODEL
     base = [
         claude,
         "-p",
@@ -417,16 +457,20 @@ def run_claude(repo, prompt, source, activity_id=None):
     session_id = load_session()
     attempts = []
     if session_id:
-        attempts.append(["--resume", session_id, "--model", MODEL])
-    attempts += [["--model", MODEL], []]
+        attempts.append(["--resume", session_id, "--model", model, "--effort", effort])
+    attempts.append(["--model", model, "--effort", effort])
     errors = []
-    coach_activity.start(activity_id, source, MODEL)
+    coach_activity.start(activity_id, source, model)
 
     with cli_lock:
         coach_activity.event(activity_id, "runtime", "Coach process is running")
         for extra in attempts:
             kind = "resumed session" if "--resume" in extra else "fresh session"
-            model = extra[-1] if "--model" in extra else "default"
+            model = (
+                extra[extra.index("--model") + 1]
+                if "--model" in extra
+                else "default"
+            )
             log(f"coach thinking... ({source}, {kind}, model: {model})")
             label = (
                 "Resuming the coach's context"
@@ -479,17 +523,107 @@ def run_claude(repo, prompt, source, activity_id=None):
                 )
                 coach_activity.state(activity_id, "validating")
                 return
-            detail = (
-                result.stderr or result.stdout or f"coach exit {result.returncode}"
-            )[:500]
+            detail = _cli_error(result)
             errors.append(detail)
             log(f"coach run failed (rc={result.returncode}): {detail[:200]}")
+            if session_id and "No conversation found" in detail:
+                clear_session(session_id)
             coach_activity.event(
                 activity_id, "retry", "Coach attempt failed; trying the fallback"
             )
-    error = "Claude CLI failed: " + " | ".join(errors)
+    error = "Claude CLI failed: " + errors[-1]
+    if len(errors) > 1 and errors[0] != errors[-1]:
+        error += f" (resume also failed: {errors[0]})"
     coach_activity.finish(activity_id, "failed", error)
     raise RuntimeError(error)
+
+
+def run_codex(
+    repo,
+    prompt,
+    source,
+    activity_id=None,
+    *,
+    model="gpt-5.6-sol",
+    effort="high",
+):
+    """Run a fresh Codex turn inside the isolated coach transaction stage."""
+    codex = shutil.which("codex") or "codex"
+    coach_prompt = f"""PRACTICE ROOM CODEX RUNTIME
+
+This is an execution task, not a request to acknowledge or summarize instructions.
+Complete the entire server batch below in this one turn. Read and obey CLAUDE.md
+as the authoritative coach contract, then use your file tools to make every
+warranted edit in the current working directory. Do not use subagents. The outer
+server ignores your final prose and validates the files, so a text-only answer
+always fails.
+
+{prompt}
+
+RUNTIME COMPLETION FENCE
+
+Execute the batch now. Before returning, verify that data/chat.json contains
+exactly one newly appended coach reply for the target message and that every
+other warranted file update is saved and valid. Do not stop after reading files,
+describing a plan, or acknowledging CLAUDE.md.
+"""
+    command = [
+        codex,
+        "exec",
+        "--ignore-user-config",
+        "--ignore-rules",
+        "--dangerously-bypass-approvals-and-sandbox",
+        "--skip-git-repo-check",
+        "-C",
+        str(repo),
+        "-m",
+        model,
+        "-c",
+        f'model_reasoning_effort="{effort}"',
+        "-",
+    ]
+    coach_activity.start(activity_id, source, model)
+    coach_activity.event(activity_id, "context", "Starting a fresh coach context")
+    log(f"coach thinking... ({source}, fresh session, model: {model}, effort: {effort})")
+    with cli_lock:
+        coach_activity.event(activity_id, "runtime", "Coach process is running")
+        try:
+            result = subprocess.run(
+                command,
+                cwd=str(repo),
+                input=coach_prompt,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                timeout=900,
+                shell=(os.name == "nt"),
+                creationflags=HIDDEN_SUBPROCESS_FLAGS,
+                startupinfo=HIDDEN_SUBPROCESS_STARTUPINFO,
+            )
+        except Exception as exc:
+            error = f"Codex CLI failed: {exc}"
+            coach_activity.finish(activity_id, "failed", error)
+            raise RuntimeError(error) from exc
+    if result.returncode != 0:
+        error = "Codex CLI failed: " + _cli_error(result)
+        log(error[:240])
+        coach_activity.finish(activity_id, "failed", error)
+        raise RuntimeError(error)
+    coach_activity.event(activity_id, "validate", "Reply drafted; checking changes")
+    coach_activity.state(activity_id, "validating")
+    log(f"coach finished ({model}, {effort}).")
+
+
+def run_coach(repo, prompt, source, selection=None, activity_id=None):
+    selected = normalize_selection(selection)
+    kwargs = {
+        "activity_id": activity_id,
+        "model": selected["model"],
+        "effort": selected["effort"],
+    }
+    if selected["provider"] == "openai":
+        return run_codex(repo, prompt, source, **kwargs)
+    return run_claude(repo, prompt, source, **kwargs)
 
 
 def _batch_prompt(stage, batch, job=None):
@@ -543,10 +677,12 @@ reply beside this target after validation.
 def _run_staged_claude(stage, batch, job=None):
     source = "daily practice logs" if batch["source"] == "daily" else "coach message"
     activity_id = job.get("id") if job else None
-    run_claude(
+    selection = job.get("selection") if job else DEFAULT_SELECTION
+    run_coach(
         stage,
         _batch_prompt(stage, batch, job),
         source,
+        selection,
         activity_id=activity_id,
     )
 
@@ -669,6 +805,8 @@ class Handler(SimpleHTTPRequestHandler):
                     "coachRunning": bool(queue["processing"] or log_processing),
                     "coachQueue": queue,
                     "coachActivity": coach_activity.snapshot(),
+                    "coachModels": public_catalog(),
+                    "defaultCoachSelection": DEFAULT_SELECTION,
                     "practiceLogs": practice_logs,
                 },
             )
@@ -727,7 +865,9 @@ class Handler(SimpleHTTPRequestHandler):
         if url.path == "/api/chat":
             try:
                 job = coach_queue.accept(
-                    payload.get("text"), payload.get("requestId")
+                    payload.get("text"),
+                    payload.get("requestId"),
+                    payload.get("selection"),
                 )
                 return self._json(202, {"ok": True, "job": job})
             except ValueError as exc:

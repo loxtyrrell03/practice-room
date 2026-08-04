@@ -62,6 +62,60 @@ class WindowlessSubprocessTests(unittest.TestCase):
         self.assertEqual(server.os.name == "nt", run.call_args.kwargs["shell"])
         save_session.assert_called_once_with("session-from-windowless-test")
 
+    def test_codex_cli_uses_selected_model_and_reasoning(self):
+        with tempfile.TemporaryDirectory() as temp:
+            with (
+                patch.object(server.shutil, "which", return_value="codex"),
+                patch.object(
+                    server.subprocess,
+                    "run",
+                    return_value=Completed(stdout="done"),
+                ) as run,
+            ):
+                server.run_codex(
+                    Path(temp),
+                    "test prompt",
+                    "test",
+                    model="gpt-5.6-terra",
+                    effort="xhigh",
+                )
+
+        command = run.call_args.args[0]
+        self.assertIn("gpt-5.6-terra", command)
+        self.assertIn('model_reasoning_effort="xhigh"', command)
+        self.assertEqual("-", command[-1])
+        self.assertIn("Read and obey CLAUDE.md", run.call_args.kwargs["input"])
+        self.assertEqual(
+            server.HIDDEN_SUBPROCESS_FLAGS,
+            run.call_args.kwargs["creationflags"],
+        )
+
+    def test_claude_failure_reports_fresh_actionable_error(self):
+        stale = Completed(
+            returncode=1,
+            stdout='{"result":"No conversation found with session ID: stale"}',
+        )
+        blocked = Completed(
+            returncode=1,
+            stdout='{"result":"Subscription access disabled","api_error_status":403}',
+        )
+        with tempfile.TemporaryDirectory() as temp:
+            with (
+                patch.object(server.shutil, "which", return_value="claude"),
+                patch.object(server, "load_session", return_value="stale"),
+                patch.object(server, "clear_session") as clear_session,
+                patch.object(
+                    server.subprocess,
+                    "run",
+                    side_effect=[stale, blocked],
+                ),
+            ):
+                with self.assertRaisesRegex(
+                    RuntimeError, "Subscription access disabled.*HTTP 403"
+                ):
+                    server.run_claude(Path(temp), "test prompt", "test")
+        clear_session.assert_called_once_with("stale")
+
     @unittest.skipUnless(
         server.os.name == "nt", "Windows console behavior only"
     )

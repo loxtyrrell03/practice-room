@@ -2,8 +2,8 @@
 
 Thirty-eight days to the recital. A fixed navigation rail keeps Today, the full
 week-by-week trajectory, Programme, Coach and Journal in reach. Today's practice
-blocks have built-in timers, piece security meters and a coach (Claude, via the
-Claude CLI) that knows the whole plan, remembers what you tell it, and rebuilds
+blocks have built-in timers, piece security meters and a model-selectable coach
+(OpenAI Codex or Claude CLI) that knows the whole plan, remembers what you tell it, and rebuilds
 tomorrow around how today actually went.
 
 Programme statuses use 2–4 short, labelled bullets so the current work and next
@@ -23,7 +23,7 @@ ends with a visible pass or stop test.
 Double-click **`Practice Room.bat`** in your local folder
 (`C:\Users\loxty\Desktop\Repos\practice-room`). That's it — the site opens at
 `http://localhost:8977`, data reads/writes go straight to disk, and the coach
-runs through your already-logged-in Claude CLI. No tokens, no accounts.
+runs through an already-logged-in local Codex or Claude CLI. No app login or pairing.
 Everything syncs to the private `practice-room-data` repo in the background as
 a backup (best effort — offline is fine).
 
@@ -31,7 +31,7 @@ a backup (best effort — offline is fine).
 
 Every accepted chat message is written to a private FIFO before the server
 acknowledges it. Rapid phone/laptop sends stay in acceptance order; the UI shows
-saved/waiting, processing, and failed/retrying state per message. Claude works
+saved/waiting, processing, and failed/retrying state per message. The selected model works
 in an isolated snapshot, then the server applies one prepared result with a
 deterministic reply ID. A restart resumes queued or prepared work without a
 second visible reply. Backup is deferred until the entire chat queue drains, so
@@ -63,7 +63,7 @@ never writes a chat reply or journal entry; general notes remain available for
 the next real debrief.
 
 Coach output is staged outside the live data tree and recorded as a prepared
-transaction before apply. A Claude failure retries the same logical daily batch;
+transaction before apply. A model failure retries the same logical daily batch;
 a restart finishes prepared output without generating duplicate spot-history or
 memory effects. GitHub backup failure retries only the push, never the coach
 effects.
