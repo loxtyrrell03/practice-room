@@ -104,7 +104,9 @@ the local Codex CLI and Claude Fable 5/Opus 5/Sonnet 5/Haiku 4.5 through the
 local Claude CLI. Claude locally resumes a persistent session
 (`.coach-session.json`, weekly rotation, fallback to fresh); Codex starts from
 the complete transcript, memory and coach contract in the isolated transaction
-snapshot. Retries never silently change the selected model.
+snapshot. The default is Claude Opus 5 with medium reasoning. Replies visibly
+name the exact selected model and reasoning level. Retries never silently change
+the selected model.
 
 **Memory & freshness** — `memory/MEMORY.md` updated after every conversation
 (facts, decisions, PTs, trajectory — curated, dated, <120 lines). Freshness

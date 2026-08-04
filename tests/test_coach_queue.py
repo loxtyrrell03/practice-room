@@ -6,6 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from coach_queue import CoachQueue
+from coach_models import DEFAULT_SELECTION
 
 
 class FakeRunner:
@@ -145,6 +146,21 @@ class CoachQueueTests(unittest.TestCase):
                 "model-request",
                 {**selection, "effort": "low"},
             )
+
+        queue.drain_until_idle(ignore_retry_time=True)
+        reply = self.messages()[-1]
+        self.assertEqual("coach", reply["role"])
+        self.assertEqual(selection, reply["selection"])
+
+    def test_default_selection_is_opus_medium(self):
+        self.assertEqual(
+            {
+                "provider": "anthropic",
+                "model": "claude-opus-5",
+                "effort": "medium",
+            },
+            DEFAULT_SELECTION,
+        )
 
     def test_rejects_unsupported_model_before_durable_acceptance(self):
         queue = CoachQueue(self.data, FakeRunner(), retry_base_seconds=0)

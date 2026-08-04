@@ -771,6 +771,12 @@ def queue_completed(job_id):
 
 
 class Handler(SimpleHTTPRequestHandler):
+    def end_headers(self):
+        # The phone commonly keeps this app open for days. Never let an old
+        # shell or asset survive a deploy after the cache-busting version moves.
+        self.send_header("Cache-Control", "no-store, max-age=0")
+        super().end_headers()
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(HERE), **kwargs)
 

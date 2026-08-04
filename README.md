@@ -29,9 +29,11 @@ a backup (best effort — offline is fine).
 
 ## Coach-message durability
 
-Every accepted chat message is written to a private FIFO before the server
+Claude Opus 5 with medium reasoning is the default. Every accepted chat message
+is written to a private FIFO before the server
 acknowledges it. Rapid phone/laptop sends stay in acceptance order; the UI shows
-saved/waiting, processing, and failed/retrying state per message. The selected model works
+saved/waiting, processing, and failed/retrying state per message. Replies name
+the exact model and reasoning level used. The selected model works
 in an isolated snapshot, then the server applies one prepared result with a
 deterministic reply ID. A restart resumes queued or prepared work without a
 second visible reply. Backup is deferred until the entire chat queue drains, so

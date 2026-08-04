@@ -524,6 +524,9 @@ class CoachQueue:
         reply = dict(reply)
         reply["id"] = f"reply-{job['id']}"
         reply["replyTo"] = job["messageId"]
+        reply["selection"] = normalize_selection(
+            job.get("selection"), default=LEGACY_SELECTION
+        )
 
         files = {}
         for rel in baseline:
@@ -635,7 +638,25 @@ class CoachQueue:
         path = self.data_dir / "data/chat.json"
         doc = _read_json(path)
         messages = doc.setdefault("messages", [])
-        if any(m.get("id") == reply["id"] or m.get("replyTo") == job["messageId"] for m in messages):
+        reply = dict(reply)
+        reply["selection"] = normalize_selection(
+            job.get("selection"), default=LEGACY_SELECTION
+        )
+        existing = next(
+            (
+                message
+                for message in messages
+                if message.get("id") == reply["id"]
+                or message.get("replyTo") == job["messageId"]
+            ),
+            None,
+        )
+        if existing is not None:
+            if existing.get("selection") != reply["selection"]:
+                existing["selection"] = reply["selection"]
+                _atomic_write(
+                    path, json.dumps(doc, indent=2, ensure_ascii=False) + "\n"
+                )
             return
         target = next((i for i, m in enumerate(messages) if m.get("id") == job["messageId"]), None)
         if target is None:
@@ -689,6 +710,27 @@ class CoachQueue:
     def _reconcile_messages(self, queue):
         for job in queue["jobs"]:
             self._ensure_user_message(job)
+        path = self.data_dir / "data/chat.json"
+        doc = _read_json(path, {"messages": []})
+        messages = doc.setdefault("messages", [])
+        replies = {
+            message.get("replyTo"): message
+            for message in messages
+            if message.get("role") == "coach" and message.get("replyTo")
+        }
+        changed = False
+        for job in queue["jobs"]:
+            reply = replies.get(job["messageId"])
+            if not reply:
+                continue
+            selection = normalize_selection(
+                job.get("selection"), default=LEGACY_SELECTION
+            )
+            if reply.get("selection") != selection:
+                reply["selection"] = selection
+                changed = True
+        if changed:
+            _atomic_write(path, json.dumps(doc, indent=2, ensure_ascii=False) + "\n")
 
     def _migrate_legacy_unanswered(self, queue):
         """Recover user messages stranded by the pre-queue early-return race."""

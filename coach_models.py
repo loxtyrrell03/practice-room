@@ -50,7 +50,7 @@ MODEL_CATALOG = (
         "label": "Claude Opus 5",
         "description": "Deep agentic planning with measured latency.",
         "efforts": CLAUDE_EFFORTS,
-        "defaultEffort": "high",
+        "defaultEffort": "medium",
     },
     {
         "provider": "anthropic",
@@ -73,9 +73,9 @@ MODEL_CATALOG = (
 )
 
 DEFAULT_SELECTION = {
-    "provider": "openai",
-    "model": "gpt-5.6-sol",
-    "effort": "high",
+    "provider": "anthropic",
+    "model": "claude-opus-5",
+    "effort": "medium",
 }
 
 LEGACY_SELECTION = {

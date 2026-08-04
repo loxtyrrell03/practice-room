@@ -21,7 +21,8 @@ let currentView = "today";
 let coachQueue = {pending:0, processing:0, failed:0, jobs:[]};
 let coachActivity = {};
 let coachModels = [];
-let coachSelection = {provider:"openai", model:"gpt-5.6-sol", effort:"high"};
+let coachSelection = {provider:"anthropic", model:"claude-opus-5", effort:"medium"};
+const COACH_MODEL_STORAGE_KEY = "practice-room-coach-model-v2";
 const expandedActivities = new Set();
 const phaseOpenState = new Map();
 let selectedPlanDay = null;
@@ -1254,7 +1255,8 @@ function configureCoachModels(meta){
   coachModels = Array.isArray(meta.coachModels) ? meta.coachModels : [];
   const fallback = meta.defaultCoachSelection || coachSelection;
   let saved = null;
-  try { saved = JSON.parse(localStorage.getItem("practice-room-coach-model")); } catch {}
+  try { saved = JSON.parse(localStorage.getItem(COACH_MODEL_STORAGE_KEY)); } catch {}
+  try { localStorage.removeItem("practice-room-coach-model"); } catch {}
   coachSelection = validCoachSelection(saved) || validCoachSelection(fallback) || coachSelection;
   renderModelPicker();
 }
@@ -1295,11 +1297,22 @@ function wireModelPicker(){
   document.addEventListener("keydown", event => {
     if (event.key === "Escape" && !$("modelMenu").hidden) setModelMenu(false);
   });
+  window.visualViewport?.addEventListener("resize", positionModelMenu);
 }
 
 function setModelMenu(open){
   $("modelMenu").hidden = !open;
+  if (open) positionModelMenu();
+  if (!open && $("composer").contains(document.activeElement) && document.activeElement !== $("input")){
+    document.activeElement.blur();
+  }
   $("modelTrigger").setAttribute("aria-expanded", String(open));
+}
+
+function positionModelMenu(){
+  if (window.innerWidth > 520 || $("modelMenu").hidden) return;
+  const available = Math.max(280, $("composer").getBoundingClientRect().top - 12);
+  $("modelMenu").style.setProperty("--model-menu-max-height", String(available) + "px");
 }
 
 function chooseCoachModel(model){
@@ -1319,7 +1332,7 @@ function chooseCoachEffort(effort){
 }
 
 function saveCoachSelection(){
-  try { localStorage.setItem("practice-room-coach-model", JSON.stringify(coachSelection)); } catch {}
+  try { localStorage.setItem(COACH_MODEL_STORAGE_KEY, JSON.stringify(coachSelection)); } catch {}
 }
 
 function renderModelPicker(){
@@ -1382,9 +1395,21 @@ function renderModelPicker(){
 function bubble(m){
   const d = document.createElement("div");
   d.className = "msg " + (m.role === "user" ? "user" : "coach");
+  const head = document.createElement("div"); head.className = "msg-head";
   const who = document.createElement("div"); who.className = "who";
   who.textContent = m.role === "user" ? (cfg.name || "you") : "coach";
-  d.appendChild(who);
+  head.appendChild(who);
+  if (m.role === "coach"){
+    const job = (coachQueue.jobs || []).find(item => item.messageId === m.replyTo || item.replyId === m.id);
+    const selection = m.selection || (job && job.selection);
+    if (selection){
+      const model = document.createElement("div");
+      model.className = "response-model";
+      model.textContent = formatCoachSelection(selection);
+      head.appendChild(model);
+    }
+  }
+  d.appendChild(head);
   const body = document.createElement("div");
   body.innerHTML = mdLite(m.text);
   d.appendChild(body);
