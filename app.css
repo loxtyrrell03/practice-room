@@ -143,9 +143,42 @@ main{width:100%;max-width:780px;margin:0 auto;padding:0 20px 48px;flex:1}
 .focus-overlay{position:fixed;inset:0;background:var(--bg);z-index:60;overflow:auto;
   display:flex;flex-direction:column;align-items:center;padding:36px 22px}
 .focus-inner{width:100%;max-width:640px;display:flex;flex-direction:column;gap:14px}
+.focus-topbar{display:flex;justify-content:space-between;align-items:center;gap:16px;position:relative}
 .f-kicker{color:var(--mut);font-size:.85rem;font-weight:600;letter-spacing:.05em;text-transform:uppercase}
+.focus-model-control{flex:none}
+.focus-model-trigger{border:1px solid var(--line);background:var(--card);padding:7px 10px}
+.model-menu.focus-model-menu{position:fixed;left:50%;right:auto;top:74px;bottom:auto;
+  width:min(520px,calc(100% - 32px));max-height:calc(100svh - 92px);z-index:4;
+  transform:translateX(-50%);animation:focusModelMenuIn .16s ease both}
+.focus-model-menu .model-menu-list{max-height:calc(100svh - 252px)}
+@keyframes focusModelMenuIn{from{opacity:0}to{opacity:1}}
+.focus-progress{padding:14px 0 4px;border-top:1px solid var(--line)}
+.focus-progress-copy{display:flex;justify-content:space-between;align-items:baseline;gap:14px;
+  margin-bottom:7px;color:var(--mut);font-size:.72rem;font-weight:750;letter-spacing:.06em;text-transform:uppercase}
+.focus-progress-count{color:var(--ink);font-size:.76rem;font-variant-numeric:tabular-nums}
+.focus-progress-track{height:8px;background:var(--track);border-radius:999px;overflow:hidden}
+.focus-progress-track i{display:block;height:100%;width:0;background:var(--amber);border-radius:inherit;
+  transition:width .22s ease}
 .f-title{font-family:var(--serif);font-size:2.2rem;font-weight:600;line-height:1.15}
 .f-detail{color:var(--ink2);font-size:1.1rem;line-height:1.65}
+.focus-checklist{display:flex;flex-direction:column;gap:2px}
+.focus-step{display:grid;grid-template-columns:38px minmax(0,1fr);gap:12px;align-items:start;
+  padding:11px 5px 11px 0;border-bottom:1px solid rgba(255,255,255,.055);cursor:pointer}
+.focus-step:last-child{border-bottom:0}
+.focus-step input{position:absolute;opacity:0;pointer-events:none}
+.focus-step-box{display:grid;place-items:center;width:28px;height:28px;margin-top:3px;border:1.5px solid #687269;
+  border-radius:8px;background:var(--card);transition:border-color .14s ease,background .14s ease,transform .14s ease}
+.focus-step-box::after{content:"✓";color:var(--amber-ink);font:800 .9rem var(--sans);opacity:0;transform:scale(.55);
+  transition:opacity .14s ease,transform .14s ease}
+.focus-step:hover .focus-step-box,.focus-step input:focus-visible + .focus-step-box{border-color:var(--amber)}
+.focus-step input:focus-visible + .focus-step-box{outline:2px solid rgba(226,169,79,.35);outline-offset:3px}
+.focus-step.complete .focus-step-box{background:var(--amber);border-color:var(--amber);transform:scale(.96)}
+.focus-step.complete .focus-step-box::after{opacity:1;transform:scale(1)}
+.focus-step-copy{display:block;min-width:0}
+.focus-step-copy strong{color:var(--ink);margin-right:.36em}
+.focus-step-copy strong::after{content:" —";color:var(--mut);font-weight:400}
+.focus-step.complete .focus-step-copy{color:var(--mut)}
+.focus-step.complete .focus-step-copy strong{color:var(--ink2)}
 .f-why{color:var(--mut);font-size:.9rem;border-left:3px solid var(--line);padding-left:12px}
 .f-timer-row{display:flex;gap:12px;align-items:center;margin:8px 0;flex-wrap:wrap}
 .f-timer-row .timerbtn{font-size:1.25rem;padding:14px 26px}
@@ -577,6 +610,22 @@ code{background:var(--card2);padding:2px 7px;border-radius:6px;font-size:.88em}
   .model-trigger-effort{display:inline}
   .reasoning-option{min-width:0;padding-left:4px;padding-right:4px;font-size:.62rem}
   .response-model{font-size:.62rem}
+  .focus-overlay{padding:18px 17px 28px}
+  .focus-inner{gap:12px}
+  .focus-topbar{display:grid;grid-template-columns:1fr;align-items:start;gap:7px}
+  .f-kicker{font-size:.64rem;line-height:1.4}
+  .focus-model-control{width:100%}
+  .focus-model-trigger{gap:6px;padding:7px 9px;width:100%;max-width:none;justify-content:flex-start}
+  .focus-model-trigger .model-trigger-name{max-width:none}
+  .focus-model-trigger .model-chevron{margin-left:auto}
+  .focus-model-trigger .model-provider-mark{min-width:27px}
+  .model-menu.focus-model-menu{top:58px;max-height:calc(100svh - 72px)}
+  .focus-model-menu .model-menu-list{max-height:calc(100svh - 232px)}
+  .focus-progress{padding-top:11px}
+  .f-title{font-size:2rem}
+  .f-detail{font-size:1rem;line-height:1.55}
+  .focus-step{grid-template-columns:34px minmax(0,1fr);gap:9px;padding:9px 2px 9px 0}
+  .focus-step-box{width:27px;height:27px}
 }
 
 @media(prefers-reduced-motion:reduce){

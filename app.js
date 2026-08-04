@@ -943,6 +943,87 @@ async function logObservation(b, text, clientId){
 
 /* ── focus mode ── */
 let focusIdx = null;
+const FOCUS_STEP_STORAGE_KEY = "practice-room-focus-steps-v1";
+
+function focusSteps(block){
+  return Array.isArray(block.steps)
+    ? block.steps.filter(step => step && step.lead && step.text)
+    : [];
+}
+
+function focusStepKey(block, steps){
+  const date = (state().today || {}).date || todayISO();
+  const signature = steps.map(step => `${step.lead}\u001f${step.text}`).join("\u001e");
+  return `${date}\u001d${block.id}\u001d${signature}`;
+}
+
+function readFocusStepProgress(block, steps){
+  try {
+    const saved = JSON.parse(localStorage.getItem(FOCUS_STEP_STORAGE_KEY)) || {};
+    const value = saved[focusStepKey(block, steps)];
+    return steps.map((_, index) => Boolean(Array.isArray(value) && value[index]));
+  } catch {
+    return steps.map(() => false);
+  }
+}
+
+function writeFocusStepProgress(block, steps, progress){
+  try {
+    const saved = JSON.parse(localStorage.getItem(FOCUS_STEP_STORAGE_KEY)) || {};
+    saved[focusStepKey(block, steps)] = progress.map(Boolean);
+    const keys = Object.keys(saved);
+    keys.slice(0, Math.max(0, keys.length - 80)).forEach(key => delete saved[key]);
+    localStorage.setItem(FOCUS_STEP_STORAGE_KEY, JSON.stringify(saved));
+  } catch {}
+}
+
+function paintFocusProgress(root, progress){
+  const complete = progress.filter(Boolean).length;
+  const total = progress.length;
+  const bar = root.querySelector(".focus-progress-track");
+  root.querySelector(".focus-progress-count").textContent = `${complete} / ${total}`;
+  bar.setAttribute("aria-valuenow", String(complete));
+  bar.setAttribute("aria-valuemax", String(total));
+  bar.setAttribute("aria-valuetext", `${complete} of ${total} items complete`);
+  bar.querySelector("i").style.width = `${total ? complete / total * 100 : 0}%`;
+  root.querySelectorAll(".focus-step").forEach((item, index) => {
+    item.classList.toggle("complete", progress[index]);
+  });
+}
+
+function renderFocusChecklist(root, block, steps){
+  root.innerHTML = "";
+  const progress = readFocusStepProgress(block, steps);
+  const list = document.createElement("div");
+  list.className = "focus-checklist";
+  steps.forEach((step, index) => {
+    const label = document.createElement("label");
+    label.className = "focus-step";
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.checked = progress[index];
+    input.setAttribute("aria-label", `${step.lead}: ${step.text}`);
+    const box = document.createElement("span");
+    box.className = "focus-step-box";
+    box.setAttribute("aria-hidden", "true");
+    const copy = document.createElement("span");
+    copy.className = "focus-step-copy";
+    const lead = document.createElement("strong");
+    lead.textContent = step.lead;
+    const text = document.createElement("span");
+    text.textContent = step.text;
+    copy.append(lead, text);
+    label.append(input, box, copy);
+    input.addEventListener("change", () => {
+      progress[index] = input.checked;
+      writeFocusStepProgress(block, steps, progress);
+      paintFocusProgress($("focusOverlay"), progress);
+    });
+    list.appendChild(label);
+  });
+  root.appendChild(list);
+  paintFocusProgress($("focusOverlay"), progress);
+}
 
 function openFocus(startId){
   const bs = state().today.blocks || [];
@@ -981,12 +1062,38 @@ function renderFocus(){
   if (!b) return closeFocus();
   const isBreak = isBreakBlock(b);
   const isStudy = String(b.id).startsWith("score-study");
+  const steps = focusSteps(b);
   const movementContext = blockMovementContext(b);
   const undone = bs.filter(x => !x.done).length;
   const nxt = bs.slice(focusIdx + 1).find(x => !x.done);
   const ov = $("focusOverlay");
   ov.innerHTML = `<div class="focus-inner">
-    <div class="f-kicker">Day ${Math.max(dayInfo().day,1)} · ${undone} block${undone===1?"":"s"} left · ${isStudy ? "off bench · " : ""}${b.mins} min</div>
+    <div class="focus-topbar">
+      <div class="f-kicker">Day ${Math.max(dayInfo().day,1)} · ${undone} block${undone===1?"":"s"} left · ${isStudy ? "off bench · " : ""}${b.mins} min</div>
+      <div class="focus-model-control">
+        <button class="model-trigger focus-model-trigger" id="focusModelTrigger" type="button" aria-haspopup="dialog" aria-expanded="false">
+          <span class="model-provider-mark anthropic" id="focusModelProviderMark">CL</span>
+          <span class="model-trigger-name" id="focusModelTriggerName">Claude Opus 5</span>
+          <span class="model-trigger-effort" id="focusModelTriggerEffort">Medium</span>
+          <span class="model-chevron" aria-hidden="true">⌄</span>
+        </button>
+        <div class="model-menu focus-model-menu" id="focusModelMenu" role="dialog" aria-label="Choose coach model" hidden>
+          <div class="model-menu-head">
+            <div><strong>Coach model</strong><span>Used for your next coach message</span></div>
+            <button id="focusModelMenuClose" type="button" aria-label="Close model picker">×</button>
+          </div>
+          <div class="model-menu-list" id="focusModelMenuList"></div>
+          <div class="reasoning-picker">
+            <div class="reasoning-copy"><strong>Reasoning</strong><span id="focusReasoningHint"></span></div>
+            <div class="reasoning-options" id="focusReasoningOptions" role="group" aria-label="Reasoning level"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    ${steps.length ? `<div class="focus-progress">
+      <div class="focus-progress-copy"><span>Block progress</span><strong class="focus-progress-count">0 / ${steps.length}</strong></div>
+      <div class="focus-progress-track" role="progressbar" aria-label="Block progress" aria-valuemin="0" aria-valuemax="${steps.length}" aria-valuenow="0"><i></i></div>
+    </div>` : ""}
     ${movementContext ? '<div class="movement-label"></div>' : ""}
     <div class="f-title"></div>
     <div class="f-detail"></div>
@@ -1002,7 +1109,9 @@ function renderFocus(){
   </div>`;
   if (movementContext) ov.querySelector(".movement-label").textContent = movementContext;
   ov.querySelector(".f-title").textContent = b.title;
-  renderBlockInstructions(ov.querySelector(".f-detail"), b);
+  if (steps.length) renderFocusChecklist(ov.querySelector(".f-detail"), b, steps);
+  else renderBlockInstructions(ov.querySelector(".f-detail"), b);
+  wireFocusModelPicker();
   if (b.why) ov.querySelector(".f-why").textContent = b.why;
   wireTimerButton(ov.querySelector(".timerbtn"), b);
   wireNotebar(ov, b);
@@ -1296,6 +1405,11 @@ function wireModelPicker(){
   });
   document.addEventListener("keydown", event => {
     if (event.key === "Escape" && !$("modelMenu").hidden) setModelMenu(false);
+    const focusMenu = document.getElementById("focusModelMenu");
+    if (event.key === "Escape" && focusMenu && !focusMenu.hidden){
+      focusMenu.hidden = true;
+      document.getElementById("focusModelTrigger")?.setAttribute("aria-expanded", "false");
+    }
   });
   window.visualViewport?.addEventListener("resize", positionModelMenu);
 }
@@ -1321,6 +1435,7 @@ function chooseCoachModel(model){
   coachSelection = {provider:model.provider, model:model.id, effort};
   saveCoachSelection();
   renderModelPicker();
+  renderFocusModelPicker();
 }
 
 function chooseCoachEffort(effort){
@@ -1329,6 +1444,7 @@ function chooseCoachEffort(effort){
   coachSelection = {...coachSelection, effort};
   saveCoachSelection();
   renderModelPicker();
+  renderFocusModelPicker();
 }
 
 function saveCoachSelection(){
@@ -1379,6 +1495,87 @@ function renderModelPicker(){
   $("reasoningHint").textContent = selected.provider === "anthropic"
     ? "adaptive effort" : "quality · speed";
   const options = $("reasoningOptions");
+  options.innerHTML = "";
+  selected.efforts.forEach(effort => {
+    const button = document.createElement("button");
+    const active = effort === coachSelection.effort;
+    button.type = "button";
+    button.className = "reasoning-option" + (active ? " selected" : "");
+    button.textContent = effortLabel(effort);
+    button.setAttribute("aria-pressed", String(active));
+    button.addEventListener("click", () => chooseCoachEffort(effort));
+    options.appendChild(button);
+  });
+}
+
+function wireFocusModelPicker(){
+  const trigger = document.getElementById("focusModelTrigger");
+  if (!trigger) return;
+  const menu = $("focusModelMenu");
+  trigger.addEventListener("click", event => {
+    event.stopPropagation();
+    const open = menu.hidden;
+    menu.hidden = !open;
+    trigger.setAttribute("aria-expanded", String(open));
+  });
+  $("focusModelMenuClose").addEventListener("click", () => {
+    menu.hidden = true;
+    trigger.setAttribute("aria-expanded", "false");
+  });
+  $("focusOverlay").onpointerdown = event => {
+    if (!menu.hidden && !event.target.closest(".focus-model-control")){
+      menu.hidden = true;
+      trigger.setAttribute("aria-expanded", "false");
+    }
+  };
+  renderFocusModelPicker();
+}
+
+function renderFocusModelPicker(){
+  const trigger = document.getElementById("focusModelTrigger");
+  const selected = selectedCoachModel();
+  if (!trigger || !selected) return;
+  $("focusModelProviderMark").textContent = modelMark(selected.provider);
+  $("focusModelProviderMark").classList.toggle("anthropic", selected.provider === "anthropic");
+  $("focusModelTriggerName").textContent = selected.label;
+  $("focusModelTriggerEffort").textContent = effortLabel(coachSelection.effort);
+
+  const list = $("focusModelMenuList");
+  list.innerHTML = "";
+  [...new Set(coachModels.map(model => model.provider))].forEach(provider => {
+    const models = coachModels.filter(model => model.provider === provider);
+    const label = document.createElement("div");
+    label.className = "model-group-label";
+    label.textContent = models[0].providerLabel;
+    list.appendChild(label);
+    models.forEach(model => {
+      const button = document.createElement("button");
+      const active = model.provider === coachSelection.provider && model.id === coachSelection.model;
+      button.type = "button";
+      button.className = "model-option" + (active ? " selected" : "");
+      button.setAttribute("aria-pressed", String(active));
+      const mark = document.createElement("span");
+      mark.className = "model-option-mark" + (model.provider === "anthropic" ? " anthropic" : "");
+      mark.textContent = modelMark(model.provider);
+      const copy = document.createElement("span");
+      copy.className = "model-option-copy";
+      const name = document.createElement("strong");
+      name.textContent = model.label;
+      const description = document.createElement("span");
+      description.textContent = model.description;
+      copy.append(name, description);
+      const check = document.createElement("span");
+      check.className = "model-option-check";
+      check.textContent = "✓";
+      button.append(mark, copy, check);
+      button.addEventListener("click", () => chooseCoachModel(model));
+      list.appendChild(button);
+    });
+  });
+
+  $("focusReasoningHint").textContent = selected.provider === "anthropic"
+    ? "adaptive effort" : "quality · speed";
+  const options = $("focusReasoningOptions");
   options.innerHTML = "";
   selected.efforts.forEach(effort => {
     const button = document.createElement("button");
