@@ -93,6 +93,8 @@ preserved and Desktop source PDFs are never edited.
 Accepted messages enter a durable FIFO before HTTP success; each has a stable
 ID, visible saved/processing/retrying state, one targeted coach turn and one
 deterministic reply. Prepared results and queued work recover after restart.
+Permanent provider or authentication errors produce one explicit failure reply
+and leave the FIFO immediately; they never retry forever or block later messages.
 Repo-wide backup waits for the FIFO to drain so Actions cannot answer a message
 that the local coach still owns.
 

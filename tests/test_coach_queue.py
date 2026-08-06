@@ -5,7 +5,7 @@ import unittest
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from coach_queue import CoachQueue
+from coach_queue import CoachQueue, PermanentCoachError
 from coach_models import DEFAULT_SELECTION
 
 
@@ -240,6 +240,88 @@ class CoachQueueTests(unittest.TestCase):
             [first["messageId"], first["messageId"], second["messageId"]],
         )
         self.assertEqual(queue.snapshot()["pending"], 0)
+
+    def test_permanent_provider_failure_gets_one_error_reply_and_unblocks_fifo(self):
+        calls = []
+
+        def runner(stage, job):
+            calls.append(job["messageId"])
+            if job["text"] == "blocked provider":
+                raise PermanentCoachError(
+                    "Claude CLI failed: subscription access disabled (HTTP 403)",
+                    "**Claude could not run.** Choose GPT and resend it.",
+                )
+            chat_path = Path(stage) / "data/chat.json"
+            chat = json.loads(chat_path.read_text(encoding="utf-8"))
+            chat["messages"].append(
+                {
+                    "role": "coach",
+                    "ts": job["acceptedAt"],
+                    "text": "second message answered",
+                }
+            )
+            chat_path.write_text(
+                json.dumps(chat, indent=2) + "\n", encoding="utf-8"
+            )
+
+        queue = CoachQueue(self.data, runner, retry_base_seconds=0)
+        first = queue.accept("blocked provider", "blocked-provider")
+        second = queue.accept("working provider", "working-provider")
+        queue.drain_until_idle(ignore_retry_time=True)
+
+        self.assertEqual(calls, [first["messageId"], second["messageId"]])
+        self.assertEqual(queue.snapshot()["pending"], 0)
+        jobs = queue.snapshot()["jobs"]
+        self.assertIn("HTTP 403", jobs[0]["terminalError"])
+        self.assertEqual(
+            [(message["role"], message["text"]) for message in self.messages()],
+            [
+                ("user", "blocked provider"),
+                ("coach", "**Claude could not run.** Choose GPT and resend it."),
+                ("user", "working provider"),
+                ("coach", "second message answered"),
+            ],
+        )
+
+    def test_restart_converts_old_permanent_failure_and_continues(self):
+        queue_path = self.data / ".coach-queue.json"
+        queue_path.write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "nextSequence": 2,
+                    "jobs": [
+                        {
+                            "id": "job-1-old",
+                            "requestId": "old-request",
+                            "messageId": "message-job-1-old",
+                            "text": "old blocked message",
+                            "selection": DEFAULT_SELECTION,
+                            "acceptedAt": "2026-08-05T10:00:00Z",
+                            "sequence": 1,
+                            "state": "failed",
+                            "attempts": 190,
+                            "processingStartedAt": None,
+                            "nextAttemptAt": 9999999999,
+                            "lastError": "Claude CLI failed: HTTP 403",
+                            "completedAt": None,
+                            "replyId": None,
+                            "resultFile": None,
+                        }
+                    ],
+                },
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        queue = CoachQueue(self.data, FakeRunner(), retry_base_seconds=0)
+        job = queue.snapshot()["jobs"][0]
+        self.assertEqual(job["state"], "done")
+        self.assertEqual(job["attempts"], 190)
+        self.assertIn("HTTP 403", job["terminalError"])
+        self.assertTrue(self.messages()[-1]["terminalFailure"])
 
     def test_staged_history_rewrites_are_discarded_while_reply_is_kept(self):
         def runner(stage, job):

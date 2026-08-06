@@ -20,6 +20,31 @@ from pathlib import Path
 from coach_models import LEGACY_SELECTION, normalize_selection
 
 
+PERMANENT_ERROR_MARKERS = (
+    "http 401",
+    "http 403",
+    "subscription access disabled",
+    "organization has disabled",
+    "authentication failed",
+    "not logged in",
+    "invalid api key",
+    "api key is invalid",
+)
+
+
+def is_permanent_coach_error(error):
+    text = str(error or "").lower()
+    return any(marker in text for marker in PERMANENT_ERROR_MARKERS)
+
+
+class PermanentCoachError(RuntimeError):
+    """A provider/configuration failure that cannot improve by retrying."""
+
+    def __init__(self, message, public_message=None):
+        super().__init__(message)
+        self.public_message = public_message
+
+
 EDITABLE_FILES = (
     "data/chat.json",
     "data/state.json",
@@ -309,6 +334,13 @@ class CoachQueue:
                     job["processingStartedAt"] = None
                     job["nextAttemptAt"] = 0
                     changed = True
+                elif job["state"] == "failed" and is_permanent_coach_error(
+                    job.get("lastError")
+                ):
+                    self._finish_permanent_locked(
+                        queue, job, job.get("lastError") or "Coach provider unavailable"
+                    )
+                    changed = True
             if changed:
                 self._save_queue(queue)
             self._reconcile_messages(queue)
@@ -504,8 +536,14 @@ class CoachQueue:
                 job["processingStartedAt"] = None
                 self._save_queue(queue)
             return self._apply_prepared(job_id)
+        except PermanentCoachError as exc:
+            self._finish_permanent(job_id, exc)
+            return True
         except Exception as exc:
-            self._mark_failed(job_id, exc)
+            if is_permanent_coach_error(exc):
+                self._finish_permanent(job_id, exc)
+            else:
+                self._mark_failed(job_id, exc)
             return True
 
     def _build_result(self, job, baseline, stage):
@@ -622,6 +660,48 @@ class CoachQueue:
             job["lastError"] = str(exc)[:500]
             self._save_queue(queue)
         self._wake.set()
+
+    def _finish_permanent(self, job_id, exc):
+        with self.lock:
+            queue = self._load_queue()
+            job = self._job(queue, job_id)
+            if not job or job["state"] == "done":
+                return
+            self._finish_permanent_locked(queue, job, str(exc), exc)
+            self._save_queue(queue)
+        self._wake.set()
+
+    def _finish_permanent_locked(self, queue, job, error, exc=None):
+        selection = normalize_selection(
+            job.get("selection"), default=LEGACY_SELECTION
+        )
+        provider = selection["provider"]
+        public_message = getattr(exc, "public_message", None)
+        if not public_message:
+            if provider == "anthropic":
+                public_message = (
+                    "**Claude could not run.** Claude Code access is disabled for "
+                    "this account, so this message will not keep retrying or block "
+                    "later requests. Choose a GPT model and resend it."
+                )
+            else:
+                public_message = (
+                    "**GPT could not run.** Codex access is unavailable for this "
+                    "account, so this message will not keep retrying or block later "
+                    "requests. Choose a Claude model and resend it."
+                )
+        reply = {
+            "id": f"reply-{job['id']}",
+            "replyTo": job["messageId"],
+            "role": "coach",
+            "ts": _iso_now(),
+            "text": public_message,
+            "selection": selection,
+            "terminalFailure": True,
+        }
+        self._insert_reply(job, reply)
+        self._mark_done(queue, job, reply["id"], save=False)
+        job["terminalError"] = str(error)[:500]
 
     def _mark_done(self, queue, job, reply_id, save=True):
         job["state"] = "done"
@@ -835,6 +915,7 @@ class CoachQueue:
                 job.get("selection"), default=LEGACY_SELECTION
             ),
             "lastError": job.get("lastError"),
+            "terminalError": job.get("terminalError"),
             "acceptedAt": job["acceptedAt"],
             "completedAt": job.get("completedAt"),
             "replyId": job.get("replyId"),

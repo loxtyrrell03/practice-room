@@ -21,7 +21,7 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from coach_queue import CoachQueue
+from coach_queue import CoachQueue, PermanentCoachError, is_permanent_coach_error
 from coach_models import (
     DEFAULT_SELECTION,
     normalize_selection,
@@ -529,6 +529,8 @@ def run_claude(
             log(f"coach run failed (rc={result.returncode}): {detail[:200]}")
             if session_id and "No conversation found" in detail:
                 clear_session(session_id)
+            if is_permanent_coach_error(detail):
+                break
             coach_activity.event(
                 activity_id, "retry", "Coach attempt failed; trying the fallback"
             )
@@ -536,6 +538,13 @@ def run_claude(
     if len(errors) > 1 and errors[0] != errors[-1]:
         error += f" (resume also failed: {errors[0]})"
     coach_activity.finish(activity_id, "failed", error)
+    if is_permanent_coach_error(errors[-1]):
+        raise PermanentCoachError(
+            error,
+            "**Claude could not run.** Claude Code access is disabled for this "
+            "account, so this message will not keep retrying or block later "
+            "requests. Choose a GPT model and resend it.",
+        )
     raise RuntimeError(error)
 
 
@@ -609,6 +618,13 @@ describing a plan, or acknowledging CLAUDE.md.
         error = "Codex CLI failed: " + _cli_error(result)
         log(error[:240])
         coach_activity.finish(activity_id, "failed", error)
+        if is_permanent_coach_error(error):
+            raise PermanentCoachError(
+                error,
+                "**GPT could not run.** Codex access is unavailable for this "
+                "account, so this message will not keep retrying or block later "
+                "requests. Choose a Claude model and resend it.",
+            )
         raise RuntimeError(error)
     coach_activity.event(activity_id, "validate", "Reply drafted; checking changes")
     coach_activity.state(activity_id, "validating")

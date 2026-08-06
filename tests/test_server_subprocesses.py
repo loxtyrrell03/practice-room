@@ -5,6 +5,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import server
+from coach_queue import PermanentCoachError
 
 
 class Completed:
@@ -117,7 +118,7 @@ class WindowlessSubprocessTests(unittest.TestCase):
                 ),
             ):
                 with self.assertRaisesRegex(
-                    RuntimeError, "Subscription access disabled.*HTTP 403"
+                    PermanentCoachError, "Subscription access disabled.*HTTP 403"
                 ):
                     server.run_claude(Path(temp), "test prompt", "test")
         clear_session.assert_called_once_with("stale")
