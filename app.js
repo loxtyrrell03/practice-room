@@ -468,12 +468,17 @@ function sessionTotals(s) {
 }
 function sessionDetail(s) {
   const totals = sessionTotals(s);
-  const next =
-    s.blocks.find((b) => ["active", "paused"].includes(b.status)) ||
+  const next = s.blocks.find((b) => ["active", "paused"].includes(b.status)) ||
     s.blocks.find((b) => !b.done && !["skipped", "missed"].includes(b.status));
   const valid = canStart(s);
-  return `<div class="detail-heading"><div><div class="eyebrow">${esc(s.bookingStatus === "confirmed" ? "BOOKED SESSION" : s.bookingStatus)}</div><h2>${clockLabel(s.start)}–${clockLabel(s.end)}</h2><p>${esc(s.room)} · ${fmt(s.bookedMinutes)} booked</p></div>${help("Plans adapt automatically when confirmed room availability changes. Started and completed blocks, notes and tests are preserved.", "How sessions adapt")}</div>${s.notice ? `<div class="inline-notice">${esc(s.notice)}</div>` : ""}${!valid ? `<p class="inline-notice warning">${esc(noStartReason(s))}</p>` : ""}<div class="session-totals"><span>${fmt(totals.playing)} playing</span><span>${fmt(totals.study)} study</span><span>${fmt(totals.rest)} rest</span><span>${fmt(totals.prep)} preparation</span></div><div class="session-blocks">${s.blocks.map((b) => blockRow(s, b)).join("")}</div><div class="session-actions">${next ? button(["active", "paused"].includes(next.status) ? "Continue session →" : valid ? "Start session →" : "View session →", `data-focus-session="${esc(s.id)}" data-focus-block="${esc(next.id)}"`, true) : ""}${button("Shorten session", `data-adjust="${esc(s.id)}" ${!canAdjust(s) ? "disabled" : ""}`)}</div>`;
+  const attention = s.needsAttention || s.bookingStatus !== "confirmed";
+  const warning = attention ? (s.notice || noStartReason(s)) : "";
+  const summary = s.blocks.length ? `<div class="session-totals"><span>${fmt(totals.playing)} playing</span>${totals.study ? `<span>${fmt(totals.study)} study</span>` : ""}${totals.rest ? `<span>${fmt(totals.rest)} rest</span>` : ""}${totals.prep ? `<span>${fmt(totals.prep)} preparation</span>` : ""}</div>` : "";
+  const open = next ? button(["active", "paused"].includes(next.status) ? "Continue session →" : valid ? "Start session →" : "View session →", `data-focus-session="${esc(s.id)}" data-focus-block="${esc(next.id)}"`, true) : "";
+  const adjust = canAdjust(s) ? button("Shorten session", `data-adjust="${esc(s.id)}"`) : "";
+  return `<div class="detail-heading"><div><h2>${clockLabel(s.start)}–${clockLabel(s.end)}</h2><p>${esc(s.room)} · ${fmt(s.bookedMinutes)} booked</p></div>${help("Plans adapt to changes in booked room time. Your completed practice and notes stay saved.", "How sessions adapt")}</div>${warning ? `<div class="inline-notice warning">${esc(warning)}</div>` : ""}${summary}<div class="session-blocks">${s.blocks.map((b) => blockRow(s, b)).join("")}</div>${open || adjust ? `<div class="session-actions">${open}${adjust}</div>` : ""}`;
 }
+
 function blockRow(s, b) {
   const terminal = b.done || ["skipped", "missed"].includes(b.status);
   return `<details data-block-id="${esc(b.id)}" class="schedule-block ${esc(b.kind)} ${terminal ? "complete" : ""}" ${openBlockIds.has(b.id) || ["active", "paused"].includes(b.status) ? "open" : ""}><summary><time>${clockLabel(b.start)}</time><span><strong>${esc(b.title)}</strong><small>${esc(kindNames[b.kind] || b.kind)} · ${esc(statusNames[b.status] || "Planned")}</small></span><span class="block-minutes">${b.mins} min</span></summary><div class="block-detail">${instructions(b)}<div class="block-tools">${!terminal ? button(["active", "paused"].includes(b.status) ? "Continue" : "Open block", `data-focus-session="${esc(s.id)}" data-focus-block="${esc(b.id)}"`) : ""}${help(b.why || "This block fits within your booked time.", "Why this block?")}</div>${["playing", "study"].includes(b.kind) ? noteHTML(s, b) : ""}</div></details>`;

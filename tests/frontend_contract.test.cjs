@@ -362,3 +362,14 @@ test('cancelled bookings are hidden from both planning views without deleting st
   assert.doesNotMatch(elements.todayContent.innerHTML,/removed/);
   assert.equal(elements.sessionDetail.innerHTML,'');
 });
+
+
+test('ended empty sessions do not render allocation notices, zero counters or disabled actions',()=>{
+  const {run,context}=fixture();
+  context.ended={id:'ended',bookingStatus:'confirmed',room:'Fixture room',start:'2026-01-01T10:00:00Z',end:'2026-01-01T11:00:00Z',bookedMinutes:60,blocks:[],notice:'No additional work fits: remaining time, conflicts, your limit or daily cap.'};
+  const html=run('sessionDetail(ended)');
+  assert.match(html,/Fixture room/);
+  assert.doesNotMatch(html,/No additional work|0 min|Shorten session|BOOKED SESSION/);
+  context.ended.needsAttention=true;context.ended.notice='Booking changed around started practice.';
+  assert.match(run('sessionDetail(ended)'),/Booking changed around started practice/);
+});
