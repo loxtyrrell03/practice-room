@@ -10,7 +10,7 @@ const plannerRoot = resolve(process.env.PRACTICE_PLANNER_SITE_ROOT || join(music
 const plannerPort = Number(process.env.PRACTICE_PORT || 8977);
 const legacyApiPort = Number(process.env.MUSIC_LEGACY_API_PORT || 8787);
 const plannerApi = new Set(['/api/health', '/api/meta', '/api/file', '/api/year', '/api/sessions', '/api/sessions/refresh', '/api/sessions/action', '/api/sessions/adjust', '/api/preferences', '/api/observations', '/api/chat', '/api/notebook', '/api/notebook/note', '/api/notebook/task', '/api/notebook/stage']);
-const plannerAssets = new Set(['/', '/index.html', '/app.js', '/app.css', '/manifest.webmanifest', '/icon.svg', '/icon-192.png', '/icon-512.png', '/apple-touch-icon.png', '/sw.js']);
+const plannerAssets = new Set(['/', '/index.html', '/app.js', '/notebook-ui.js', '/app.css', '/manifest.webmanifest', '/icon.svg', '/icon-192.png', '/icon-512.png', '/apple-touch-icon.png', '/sw.js']);
 let plannerChild = null;
 let plannerStarting = false;
 

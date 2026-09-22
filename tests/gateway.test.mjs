@@ -22,6 +22,7 @@ test('gateway serves planner while preserving score files and other service APIs
   await writeFile(join(directory,'index.html'),'previous score app');
   await writeFile(join(directory,'home.html'),'preserved score home');
   await writeFile(join(directory,'planner','index.html'),'academic planner');
+  await writeFile(join(directory,'planner','notebook-ui.js'),'function wireNotebook() {}');
   const child=spawn(process.execPath,[resolve('scripts/music-home-server.mjs')],{windowsHide:true,stdio:'ignore',env:{...process.env,MUSIC_PRACTICE_PORT:String(port),MUSIC_PRACTICE_SITE_ROOT:directory,PRACTICE_PORT:String(upstream.address().port),MUSIC_LEGACY_API_PORT:String(legacy.address().port),PRACTICE_SERVER_PATH:'',PRACTICE_PYTHON:''}});
   try {
     let ready=false;
@@ -29,6 +30,9 @@ test('gateway serves planner while preserving score files and other service APIs
     assert.ok(ready);
     const base=`http://127.0.0.1:${port}`;
     assert.equal(await (await fetch(base+'/')).text(),'academic planner');
+    const notebookScript = await fetch(base+'/notebook-ui.js?v=38');
+    assert.match(notebookScript.headers.get('content-type'), /javascript/);
+    assert.equal(await notebookScript.text(),'function wireNotebook() {}');
     assert.equal(await (await fetch(base+'/home')).text(),'preserved score home');
     assert.deepEqual(await (await fetch(base+'/api/meta?t=7')).json(),{planner:true,path:'/api/meta?t=7'});
     for (const path of ['/api/notebook', '/api/notebook/note', '/api/notebook/task', '/api/notebook/stage']) {
