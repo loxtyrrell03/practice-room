@@ -323,6 +323,7 @@ async function refreshQuiet() {
     renderSync();
   } finally {
     refreshing = false;
+    renderSync();
   }
 }
 async function refreshBookings() {

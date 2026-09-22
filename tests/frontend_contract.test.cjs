@@ -332,3 +332,13 @@ test("earlier coach messages render only in a collapsed archive with a current-y
   run("renderCoach()");
   assert.equal(elements.thread.children[0].open, true);
 });
+
+
+test('background refresh releases the refresh control after completion',async()=>{
+  const {run,elements}=fixture();
+  elements.banner={textContent:''};
+  run('loadAll=async()=>{};renderAll=()=>{};var syncStates=[];renderSync=()=>syncStates.push(refreshing)');
+  await run('refreshQuiet()');
+  assert.equal(run('refreshing'),false);
+  assert.equal(run('syncStates.at(-1)'),false);
+});
