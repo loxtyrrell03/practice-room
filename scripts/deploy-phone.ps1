@@ -62,6 +62,31 @@ function Wait-Gateway {
   throw "Gateway did not become ready at $Path."
 }
 
+function Stop-RemainingPlanner {
+  param($Expected, [string]$Script, [string]$Executable)
+  # Some Windows launchers tie the Python child to the gateway's lifetime.
+  # Only accept an absent listener when the original process also exited.
+  $remaining = Get-OwnedListener -Port 8977 -Script $Script -Executable $Executable -AllowAbsent
+  if (!$remaining) {
+    $original = Get-CimInstance Win32_Process -Filter "ProcessId=$($Expected.ProcessId)"
+    if ($original -and $original.CreationDate -eq $Expected.CreationDate) {
+      throw 'The original planner lost its listener but is still running; inspect it before continuing.'
+    }
+    return
+  }
+  Assert-SameProcess $Expected $remaining
+  try {
+    Assert-PlannerIdle
+    Stop-OwnedProcess -Expected $Expected -Port 8977 -Script $Script -Executable $Executable
+  } catch {
+    $stopError = $_
+    if (Get-OwnedListener -Port 8977 -Script $Script -Executable $Executable -AllowAbsent) { throw $stopError }
+    $original = Get-CimInstance Win32_Process -Filter "ProcessId=$($Expected.ProcessId)"
+    if ($original -and $original.CreationDate -eq $Expected.CreationDate) { throw $stopError }
+    # The owned child exited between the listener check and the idle/stop call.
+  }
+}
+
 function Restore-Deployment {
   param([string]$RollbackPath, [string]$GatewayPath, [string]$StartPath, [string]$PlannerPath, $AssetState)
   Copy-Item -LiteralPath (Join-Path $RollbackPath 'music-home-server.mjs') -Destination $GatewayPath
@@ -137,8 +162,7 @@ try {
   Stop-OwnedProcess -Expected $gatewayProcess -Port 8790 -Script $gatewayPath -Executable $nodePath
   $stoppedGateway = $true
   if ($backendProcess) {
-    Assert-PlannerIdle
-    Stop-OwnedProcess -Expected $backendProcess -Port 8977 -Script $backendPath -Executable $Python
+    Stop-RemainingPlanner -Expected $backendProcess -Script $backendPath -Executable $Python
     $stoppedBackend = $true
   }
   $changedFiles = $true

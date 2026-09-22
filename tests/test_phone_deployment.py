@@ -165,8 +165,30 @@ Assert-True ((Get-Content (Join-Path $plannerPath 'score.pdf')) -eq 'preserved s
 """
         self.run_powershell(body)
         with_backend = body.replace("$backendProcess=$null;", "$backendProcess=[pscustomobject]@{ProcessId=2};")
+        with_backend = with_backend.replace("function Get-OwnedListener {return $null}", "function Get-OwnedListener {param([int]$Port) if ($Port -eq 8977) {return $backendProcess} return $null}")
         with_backend = with_backend.replace("$global:stops -eq 1", "$global:stops -eq 2")
         self.run_powershell(with_backend + "\nAssert-True $global:backendRestored 'Standalone backend was not restored'\n")
+
+    def test_supervised_child_exit_is_accepted_without_stopping_a_successor(self):
+        self.run_powershell(r"""
+$original=[pscustomobject]@{ProcessId=123;CreationDate=[datetime]'2026-09-22';CommandLine='python server.py'}
+$script:remaining=$null; $script:process=$null; $script:stops=0
+function Get-OwnedListener {$script:remaining}
+function Get-CimInstance {$script:process}
+function Stop-OwnedProcess {$script:stops++}
+function Assert-PlannerIdle {}
+Stop-RemainingPlanner -Expected $original -Script 'server.py' -Executable 'python'
+Assert-True ($script:stops -eq 0) 'An exited child caused a process stop'
+$script:process=$original
+$rejected=$false
+try {Stop-RemainingPlanner -Expected $original -Script 'server.py' -Executable 'python'} catch {$rejected=$true}
+Assert-True $rejected 'A live child without a listener was ignored'
+$script:remaining=$original.PSObject.Copy(); $script:remaining.CreationDate=$original.CreationDate.AddSeconds(1)
+$rejected=$false
+try {Stop-RemainingPlanner -Expected $original -Script 'server.py' -Executable 'python'} catch {$rejected=$true}
+Assert-True $rejected 'A replacement process was accepted'
+Assert-True ($script:stops -eq 0) 'A replacement process was stopped'
+""")
 
 
 if __name__ == "__main__":
