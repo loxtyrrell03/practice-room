@@ -101,7 +101,10 @@ def suggestions(note):
     if not bars:
         match = re.search(r"\b(?:bars?|mm?\.?)\s*(\d+(?:\s*[-–—]\s*\d+)?)", source, re.I)
         bars = match.group(1) if match else ""
-    location = f"bars {bars}" if bars else ("the exposition" if re.search(r"\bexposition\b", source, re.I) else "the noted passage")
+    bars = re.sub(r"\s*[-–—]\s*", "–", bars)
+    section = re.search(r"\b(exposition|development|recapitulation|coda|ending|transition|introduction)\b", source, re.I)
+    location = f"bars {bars}" if bars else ("the " + section.group(1).lower() if section else "the noted passage")
+    hand = "LH" if re.search(r"\bLH\b|left hand", source, re.I) else "RH" if re.search(r"\bRH\b|right hand", source, re.I) else ""
     rules = [
         ("fingering", r"fingering.*(?:undecided|unsure|unclear|change|problem)|(?:decide|settle|choose).*fingering", "Settle fingering", "Compare two options slowly, choose one and mark it. Revisit it after another task.", "playing"),
         ("memory", r"(?:memory|memor[yi]|recall).*(?:shaky|weak|uncertain|blank|problem|slip)|(?:forgot|forget|can't remember)", "Check memory landmarks", "Name the harmony and starting cues, recall one short phrase, then check the score. Isolate a hand if that reveals the gap.", "study"),
@@ -115,7 +118,7 @@ def suggestions(note):
     found = []
     for category, pattern, title_, instruction, kind in rules:
         if re.search(pattern, source, re.I):
-            found.append({"category": category, "title": f"{title_} · {location}", "instruction": instruction,
+            found.append({"category": category, "scope": f"{location}:{hand}", "title": f"{title_}{' (' + hand + ')' if hand else ''} · {location}", "instruction": instruction,
                           "bars": bars, "kind": kind, "minutes": 10})
     if not found and re.search(r"\?|\b(?:need|problem|difficult|weak|shaky|unsure|unclear|work on|practise|practice|review)\b", source, re.I):
         found = [{"category": "review:" + hashlib.sha256(source.lower().encode()).hexdigest()[:16],
@@ -177,8 +180,7 @@ class PracticeNotebook:
                     "date": now.date().isoformat(), "movement": movement["title"] if movement else None}
             doc["notes"].append(note)
             for idea in suggestions(note):
-                key = "|".join([piece["id"], movement_id or "", idea["category"], idea["bars"].lower(),
-                                "exposition" if "exposition" in note["text"].lower() else ""])
+                key = "|".join([piece["id"], movement_id or "", idea["category"], idea["bars"].lower(), idea.get("scope", "")])
                 existing = next((t for t in doc["tasks"] if t["key"] == key), None)
                 if existing:
                     existing.setdefault("noteIds", []).append(note["id"])

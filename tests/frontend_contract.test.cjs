@@ -5,7 +5,7 @@ const vm = require("node:vm");
 const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
-const source = fs.readFileSync(path.join(__dirname, "..", "app.js"), "utf8");
+const source = fs.readFileSync(path.join(__dirname, "..", "app.js"), "utf8") + "\n" + fs.readFileSync(path.join(__dirname, "..", "notebook-ui.js"), "utf8");
 
 function fixture() {
   const storage = new Map(),
@@ -211,7 +211,7 @@ test("refresh does not replace a note editor while the pianist is typing", () =>
   const { context, run } = fixture();
   context.counts = { week: 0, today: 0 };
   run(
-    'document.activeElement={tagName:"INPUT",closest:()=>({closest:selector=>selector==="#view-week"})};renderWeek=()=>counts.week++;renderToday=()=>counts.today++;renderProgramme=()=>{};renderCoach=()=>{};renderJournal=()=>{};renderYear=()=>{};tickTimer=()=>{};renderAll()',
+    'document.activeElement={tagName:"INPUT",closest:s=>s===".note-control"?({closest:selector=>selector==="#view-week"}):null};renderWeek=()=>counts.week++;renderToday=()=>counts.today++;renderProgramme=()=>{};renderCoach=()=>{};renderJournal=()=>{};renderYear=()=>{};tickTimer=()=>{};renderAll()',
   );
   assert.equal(context.counts.week, 0);
   assert.equal(context.counts.today, 1);
@@ -372,4 +372,51 @@ test('ended empty sessions do not render allocation notices, zero counters or di
   assert.doesNotMatch(html,/No additional work|0 min|Shorten session|BOOKED SESSION/);
   context.ended.needsAttention=true;context.ended.notice='Booking changed around started practice.';
   assert.match(run('sessionDetail(ended)'),/Booking changed around started practice/);
+});
+
+test('free notes keep a newer draft when an earlier save finishes',async()=>{
+  const {run,context,elements,storage}=fixture();
+  for(const id of ['freeNoteText','freeNoteBars','freeNoteSave','freeNoteResult']) elements[id]={value:''};
+  elements.freeNoteText.value='First note';
+  run('noteChoice={pieceId:"piece-a",movementId:"first"};saveCache=()=>{};renderNotebook=()=>{};refreshQuiet=async()=>{}');
+  let resolveSave;
+  context.pendingSave=new Promise(resolve=>{resolveSave=resolve;});
+  run('api=()=>pendingSave');
+  const saving=run('saveFreeNote()');
+  elements.freeNoteText.value='Second thought';
+  run('captureFreeDraft()');
+  resolveSave({notebook:{notes:[{text:'First note'}],tasks:[],routes:[]}});
+  await saving;
+  assert.equal(elements.freeNoteText.value,'Second thought');
+  assert.equal(JSON.parse(storage.get('practice-room-free-notes-v1'))['piece-a:first'].text,'Second thought');
+  assert.match(elements.freeNoteResult.textContent,/new draft is kept/);
+});
+
+test('failed free-note saves keep the same retry identity and full text',async()=>{
+  const {run,elements,storage}=fixture();
+  for(const id of ['freeNoteText','freeNoteBars','freeNoteSave','freeNoteResult']) elements[id]={value:''};
+  elements.freeNoteText.value='LH weak'; elements.freeNoteBars.value='20–30';
+  run('noteChoice={pieceId:"piece-a",movementId:""};renderNotebook=()=>{};api=async()=>{throw new Error("Offline")};');
+  await run('saveFreeNote()');
+  const first=JSON.parse(storage.get('practice-room-free-notes-v1'))['piece-a:'];
+  await run('saveFreeNote()');
+  const again=JSON.parse(storage.get('practice-room-free-notes-v1'))['piece-a:'];
+  assert.equal(first.clientId,again.clientId);
+  assert.equal(elements.freeNoteText.value,'LH weak');
+  assert.equal(again.bars,'20–30');
+  assert.match(elements.freeNoteResult.textContent,/retry/);
+});
+
+test('timeline renders scoped expandable stages and retains expanded state on refresh',()=>{
+  const {run,context,elements}=fixture();
+  elements.deadlineOverview={};elements.pieces={};
+  context.fixtureRoute={id:'p:due',pieceId:'p',title:'Piece',deadlineMonth:'2027-02',scope:'I',stages:[{id:'p:due:learn',label:'Learn',title:'Learn sections',startDate:'2026-09-22',endDate:'2026-11-30',focus:'Named passage',checkpoint:'Return later',kind:'work',movementIds:['one'],targets:[]}]};
+  run('docs[FILES.state]={obj:{pieces:[{id:"p",title:"Piece"}]}};academic={startDate:"2026-09-22",deadlines:[]};notebook.routes=[fixtureRoute];expandedStages.add("p:due:learn");renderTimeline()');
+  assert.match(elements.pieces.innerHTML,/aria-expanded="true"/);
+  assert.match(elements.pieces.innerHTML,/data-stage-id="p:due:learn" open/);
+  assert.match(elements.pieces.innerHTML,/Named passage/);
+  assert.match(elements.pieces.innerHTML,/Return later/);
+  assert.match(elements.pieces.innerHTML,/Movements I/);
+  run('renderTimeline()');
+  assert.match(elements.pieces.innerHTML,/data-stage-id="p:due:learn" open/);
 });

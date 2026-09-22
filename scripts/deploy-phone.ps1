@@ -101,7 +101,7 @@ if ($backendProcess) { Assert-PlannerIdle }
 if ($LASTEXITCODE) { throw 'Install requirements.txt in the selected Python before deployment.' }
 & $nodePath --check (Join-Path $PSScriptRoot 'music-home-server.mjs')
 if ($LASTEXITCODE) { throw 'Gateway syntax validation failed.' }
-$assets = @('index.html','app.css','app.js','manifest.webmanifest','icon.svg','icon-192.png','icon-512.png')
+$assets = @('index.html','app.css','app.js','notebook-ui.js','manifest.webmanifest','icon.svg','icon-192.png','icon-512.png')
 foreach ($asset in $assets) { if (!(Test-Path -LiteralPath (Join-Path $sourceRoot $asset) -PathType Leaf)) { throw "Missing asset $asset" } }
 
 # Refresh one bounded rollback slot. No live file changes before final checks.

@@ -15,7 +15,7 @@ let cfg = { name: "you" },
   docs = {},
   sessionsDoc = { sessions: [], days: [], sync: { status: "unavailable" } },
   academic = {};
-let currentView = "week",
+let currentView = "today",
   selectedDate = null,
   selectedSessionId = null,
   weekStart = null,
@@ -244,6 +244,7 @@ function saveCache() {
     docs,
     sessionsDoc,
     academic,
+    notebook,
     at: new Date().toISOString(),
   });
 }
@@ -258,6 +259,7 @@ async function loadAll() {
     ghGet(FILES.obs),
     api("/api/meta"),
     ghGet(FILES.weekly),
+    api("/api/notebook"),
   ]);
   if (results[0].status === "rejected") throw results[0].reason;
   sessionsDoc = results[0].value;
@@ -269,6 +271,10 @@ async function loadAll() {
     },
   );
   if (results[8].status === "fulfilled") docs[FILES.weekly] = results[8].value;
+  if (results[9].status === "fulfilled") {
+    notebook = results[9].value;
+    notebookError = "";
+  } else notebookError = "Notebook could not be refreshed. Your saved notes and drafts are kept.";
   if (results[7].status === "fulfilled") {
     const meta = results[7].value;
     cfg = { name: meta.name || "you" };
@@ -289,6 +295,7 @@ async function start() {
       docs = cache.docs || {};
       sessionsDoc = cache.sessionsDoc || sessionsDoc;
       academic = cache.academic || {};
+      notebook = cache.notebook || notebook;
     }
     offline = true;
     banner(
@@ -346,6 +353,7 @@ async function refreshBookings() {
 function switchView(v) {
   if (!["today", "week", "programme", "coach", "journal"].includes(v)) return;
   currentView = v;
+  document.querySelectorAll(".more-nav").forEach((el) => (el.open = false));
   document
     .querySelectorAll(".tab")
     .forEach((b) => b.classList.toggle("active", b.dataset.view === v));
@@ -363,8 +371,9 @@ function switchView(v) {
 function renderAll() {
   const editingNote = document.activeElement?.closest(".note-control");
   if (!editingNote?.closest("#view-week")) renderWeek();
-  if (!editingNote?.closest("#view-today")) renderToday();
-  renderProgramme();
+  if (!editingNote?.closest("#view-today") && !document.activeElement?.closest("#todayContent")) renderToday();
+  if (!document.activeElement?.closest("#pieces")) renderProgramme();
+  renderNotebook();
   renderCoach();
   renderJournal();
   renderYear();
@@ -497,12 +506,7 @@ function renderToday() {
       rows.find((s) =>
         s.blocks?.some((b) => ["active", "paused"].includes(b.status)),
       ) || rows.find((s) => new Date(s.end) > new Date());
-  $("todayContent").innerHTML = next
-    ? `<div class="session-detail today-session">${sessionDetail(next)}</div>`
-    : rows.length
-      ? `<div class="empty-panel"><h2>Today’s room bookings have ended.</h2>${button("Open repertoire →", 'data-switch="programme"')}</div>`
-      : emptySessions(date);
-  wireNotes($("todayContent"));
+  renderPracticeList(date, rows, next);
 }
 function drafts() {
   return readLocal(DRAFT_KEY, {});
@@ -732,48 +736,7 @@ function pieceDeadlineLabel(piece) {
     : monthLabel(piece.planning?.deadlineMonth || "");
 }
 function renderProgramme() {
-  const ds = deadlines();
-  $("deadlineOverview").innerHTML = (
-    ds.length
-      ? ds
-      : [
-          { title: "February assessments", month: "2027-02" },
-          { title: "Final recital", month: "2027-05" },
-        ]
-  )
-    .map(
-      (d) =>
-        `<div><span class="eyebrow">${esc(deadlineName(d))}</span><strong>${d.date ? esc(dateLabel(d.date)) : esc(monthLabel(deadlineMonth(d)))}</strong><small>${d.date ? "Confirmed date" : "Exact date to confirm"}</small></div>`,
-    )
-    .join("");
-  const list = (state().pieces || []).filter(
-    (p) =>
-      pieceFilter === "all" ||
-      p.planning?.deadlineMonth === pieceFilter ||
-      (p.movements || []).some(
-        (m) => m.planning?.deadlineMonth === pieceFilter,
-      ) ||
-      p.id === "beethoven-op109",
-  );
-  $("pieces").innerHTML =
-    list
-      .map((p) => {
-        const notes = (p.statusPoints || [])
-          .map(
-            (point) =>
-              `<li><strong>${esc(point.lead)}</strong> ${esc(point.text)}</li>`,
-          )
-          .join("");
-        const spots = (docs[FILES.spots]?.obj?.spots || []).filter(
-          (sp) => sp.piece === p.id && sp.status !== "fixed",
-        );
-        const evidence = p.lastCold
-          ? `${p.lastCold.result === "pass" ? "Held up" : p.lastCold.result === "fail" ? "Needs another approach" : p.lastCold.result} · ${p.lastCold.date}`
-          : "Not assessed yet";
-        return `<article class="piece"><div class="piece-heading"><div><div class="eyebrow">${esc(pieceDeadlineLabel(p))}</div><h2>${esc(p.title)}</h2></div><span class="status">${p.id === "lecture-recital" ? "Music undecided" : "Learning in progress"}</span></div>${notes ? `<ul class="instruction-list piece-points">${notes}</ul>` : `<p>${esc(p.note || p.planning?.focus || "Choose a first section and record a baseline.")}</p>`}<details><summary>Learning route & evidence</summary><div class="piece-detail"><p><strong>Last recall check:</strong> ${esc(evidence)} ${help("Record what happened, when, and with which score/tempo conditions. An unassessed piece has missing evidence, not zero ability.")}</p>${p.movements?.map((m) => `<section><h3>${esc(m.title)}</h3><p>${esc(m.planning?.focus || "Map the sections; work on the next unfinished passage.")}</p>${m.planning?.passTest ? `<p class="muted"><strong>Next check:</strong> ${esc(m.planning.passTest)}</p>` : ""}</section>`).join("") || ""}${spots.length ? `<h3>Open observations</h3>${spots.map((sp) => `<p>${esc(sp.movement || "")} ${esc(sp.bars ? `Passage ${sp.bars}: ` : "")}${esc(sp.issue)} <small class="muted">${esc(sp.logged || "")}</small></p>`).join("")}` : ""}<button class="text-button" data-piece-coach="${esc(p.title)}">Discuss the next step with coach →</button></div></details></article>`;
-      })
-      .join("") ||
-    '<div class="empty-panel"><h2>No works in this group yet</h2><p>Your saved repertoire will appear here after the academic-year setup is complete.</p></div>';
+  renderTimeline();
 }
 function renderYear() {
   const phases =
@@ -964,7 +927,7 @@ function wireChrome() {
     );
   document.querySelector(".brand")?.addEventListener?.("click", (e) => {
     e.preventDefault();
-    switchView("week");
+    switchView("today");
   });
   $("refreshBtn").addEventListener("click", refreshBookings);
   $("settingsBtn").addEventListener("click", openSettings);
@@ -1129,8 +1092,9 @@ window.addEventListener("DOMContentLoaded", async () => {
     return;
   }
   wireChrome();
+  wireNotebook();
   await start();
-  switchView("week");
+  switchView("today");
   setInterval(() => {
     if (document.visibilityState === "visible") refreshQuiet();
   }, 25000);

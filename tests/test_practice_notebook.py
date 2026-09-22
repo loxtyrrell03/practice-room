@@ -114,6 +114,10 @@ class NotebookTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.book.stage({**stage, 'revision': doc['revision']})
         self.assertEqual('My section plan', self.book.get()['routes'][0]['stages'][0]['title'])
+        planned = reconcile(snapshot(), self.state, self.year, routes=updated['routes'], now=NOW)
+        matching = [b for b in blocks(planned) if b.get('pieceId') == 'a']
+        self.assertTrue(matching)
+        self.assertTrue(all('A specific passage' in b['steps'][0]['text'] for b in matching))
 
     def test_legacy_notes_stay_visible_and_corrupt_storage_fails_closed(self):
         atomic_write_json(self.root/'data/observations.json', {'obs': [{'id': 'old', 'pieceId': 'a', 'localDate': '2026-09-22', 'text': 'Old note'}]})

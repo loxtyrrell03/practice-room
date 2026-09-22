@@ -6,7 +6,7 @@
       name="viewport"
       content="width=device-width,initial-scale=1,viewport-fit=cover"
     />
-    <meta name="theme-color" content="#101613" />
+    <meta name="theme-color" content="#f7f8fa" />
     <meta
       name="description"
       content="Your room bookings, repertoire and next useful practice session."
@@ -18,25 +18,24 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="app.css?v=37" />
+    <link rel="stylesheet" href="app.css?v=38" />
   </head>
   <body>
     <a class="skip-link" href="#main">Skip to content</a>
     <header class="app-header">
       <a class="brand" href="#" aria-label="Practice Room home"
-        >Practice Room<span>Academic year 2026–27</span></a
+        >Practice Room</a
       >
       <nav class="main-nav" id="tabs" aria-label="Practice Room">
-        <button class="tab" data-view="today">Today</button
-        ><button class="tab active" data-view="week">Week</button
+        <button class="tab active" data-view="today">Today</button
+        ><button class="tab" data-view="week">Plan</button
         ><button class="tab" data-view="programme">Repertoire</button
-        ><button class="tab" data-view="coach">
-          Coach<span id="coachDot" class="dot" hidden></span></button
-        ><button class="tab" data-view="journal">Journal</button>
+        >
       </nav>
+      <details class="more-nav"><summary>More<span id="coachDot" class="dot" hidden></span></summary><div><button data-switch="coach">Coach</button><button data-switch="journal">Journal</button></div></details>
       <button
         class="icon-button"
         id="settingsBtn"
@@ -48,10 +47,10 @@
     </header>
     <div id="banner" class="banner" role="status" hidden></div>
     <main id="main" tabindex="-1">
-      <section id="view-week" class="view">
+      <section id="view-week" class="view" hidden>
         <div class="page-heading">
           <div>
-            <div class="eyebrow">YOUR BOOKED PRACTICE</div>
+            <div class="eyebrow">Practice plan</div>
             <h1 id="weekTitle">Your week</h1>
             <p id="weekSubtitle" class="muted">Loading your saved sessions…</p>
           </div>
@@ -107,28 +106,39 @@
           <div id="yearRoute"></div>
         </details>
       </section>
-      <section id="view-today" class="view" hidden>
+      <section id="view-today" class="view">
         <div class="page-heading">
           <div>
             <div class="eyebrow" id="todayDate"></div>
             <h1>Today</h1>
           </div>
           <button class="button secondary" data-switch="week">
-            See the week →
+            See the week
           </button>
         </div>
-        <div id="todayContent"></div>
+        <div class="practice-layout">
+          <div><div id="todayContent"><div class="list-skeleton" aria-label="Loading practice plan"><span></span><span></span><span></span></div></div><details class="saved-work"><summary>Practice tasks</summary><div id="taskLibrary"></div></details></div>
+          <aside class="quick-notebook" aria-label="Practice notebook">
+            <div class="section-heading"><h2>Quick note</h2><button type="button" class="help-button" data-help="Notes stay with this piece. Common practice problems automatically become editable tasks for future sessions." aria-label="How notes shape the plan">?</button></div>
+            <label for="notePiece">Piece</label><select id="notePiece"><option>Loading repertoire…</option></select>
+            <label for="noteMovement" id="noteMovementLabel">Movement</label><select id="noteMovement"></select>
+            <label class="sr-only" for="freeNoteText">Note for this piece</label><textarea id="freeNoteText" rows="4" maxlength="2000" placeholder="What needs another look?"></textarea>
+            <div class="note-footer"><label>Bars <span class="muted">(optional)</span><input id="freeNoteBars" maxlength="80" placeholder="e.g. 20–30"></label><button id="freeNoteSave" class="button primary" type="button" disabled>Save note</button></div>
+            <p id="freeNoteResult" class="inline-status" role="status"></p>
+            <details class="recent-notes" id="noteHistory"><summary>Notes for this piece</summary><div id="pieceNotes"></div></details>
+          </aside>
+        </div>
       </section>
       <section id="view-programme" class="view" hidden>
         <div class="page-heading">
           <div>
             <div class="eyebrow">2026–27</div>
-            <h1>Your repertoire</h1>
+            <h1>The year at a glance</h1>
           </div>
           <button
             class="help-button"
-            data-help="Readiness comes from dated observations and later checks. Completing a timer records effort; it does not prove a piece is secure."
-            aria-label="How readiness is measured"
+            data-help="These are preparation targets, not measured progress. Expand a stage for its goals and checkpoint. Exact performance dates stay unconfirmed until you set them."
+            aria-label="About the preparation timeline"
           >
             ?
           </button>
@@ -265,6 +275,26 @@
         <div id="entries"></div>
       </section>
     </main>
+    <dialog id="taskDialog" class="settings-dialog">
+      <div class="dialog-heading"><h2>Edit practice task</h2><button class="icon-button" data-close="taskDialog" aria-label="Close task editor">×</button></div>
+      <form id="taskForm"><input id="taskId" type="hidden"><input id="taskRevision" type="hidden">
+        <label class="field">Task<input id="taskTitle" maxlength="250" required></label>
+        <label class="field">What to do<textarea id="taskInstruction" rows="4" maxlength="2000" required></textarea></label>
+        <div class="field-pair"><label>Minutes<input id="taskMinutes" type="number" min="5" max="45" required></label><label>From<input id="taskDate" type="date" required></label></div>
+        <label class="field">Type<select id="taskKind"><option value="playing">Playing</option><option value="study">Score study</option></select></label>
+        <p id="taskResult" class="inline-status" role="status"></p><button class="button primary" type="submit">Save task</button>
+      </form>
+    </dialog>
+    <dialog id="stageDialog" class="settings-dialog">
+      <div class="dialog-heading"><h2>Edit preparation stage</h2><button class="icon-button" data-close="stageDialog" aria-label="Close stage editor">×</button></div>
+      <form id="stageForm"><input id="stageId" type="hidden"><input id="stageRevision" type="hidden">
+        <label class="field">Stage<input id="stageTitle" maxlength="150" required></label>
+        <div class="field-pair"><label>From<input id="stageStart" type="date" required></label><label>To<input id="stageEnd" type="date" required></label></div>
+        <label class="field">Goal<textarea id="stageFocus" rows="3" maxlength="2000" required></textarea></label>
+        <label class="field">Checkpoint<textarea id="stageCheckpoint" rows="3" maxlength="2000" required></textarea></label>
+        <p id="stageResult" class="inline-status" role="status"></p><button class="button primary" type="submit">Save stage</button>
+      </form>
+    </dialog>
     <dialog id="settingsDialog" class="settings-dialog">
       <div class="dialog-heading">
         <h2>Your practice settings</h2>
@@ -384,6 +414,7 @@
       </button>
       <p id="helpText"></p>
     </div>
-    <script src="app.js?v=37"></script>
+    <script src="app.js?v=38"></script>
+    <script src="notebook-ui.js?v=38"></script>
   </body>
 </html>
