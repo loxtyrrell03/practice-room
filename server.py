@@ -52,6 +52,7 @@ from repertoire_changes import (
     render_repertoire_prompt,
 )
 from session_service import SessionService, YEAR, SESSIONS
+from practice_notebook import PracticeNotebook
 
 
 HERE = Path(__file__).resolve().parent
@@ -854,6 +855,12 @@ class Handler(SimpleHTTPRequestHandler):
             return self._json(200, {"ok": True, "app": "practice-room", "version": "academic-year-1"})
         if url.path == "/api/year":
             return self._json(200, get_session_service().year())
+        if url.path == "/api/notebook":
+            try:
+                return self._json(200, PracticeNotebook(DATA, data_lock).get())
+            except Exception as exc:
+                log(f"notebook read failed: {exc}")
+                return self._json(500, {"error": "Your notebook could not be loaded. Saved notes are kept; try again."})
         if url.path == "/api/sessions":
             return self._json(200, get_session_service().get())
         if url.path == "/api/meta":
@@ -924,6 +931,17 @@ class Handler(SimpleHTTPRequestHandler):
         if url.path == "/api/sessions/refresh":
             get_session_service().request_refresh()
             return self._json(202, {"ok": True, "status": "refreshing"})
+        if url.path in {"/api/notebook/note", "/api/notebook/task", "/api/notebook/stage"}:
+            try:
+                notebook = PracticeNotebook(DATA, data_lock)
+                operation = {"/api/notebook/note": notebook.note, "/api/notebook/task": notebook.task,
+                             "/api/notebook/stage": notebook.stage}[url.path]
+                return self._json(200, operation(payload))
+            except (ValueError, TypeError) as exc:
+                return self._json(400, {"error": str(exc)})
+            except Exception as exc:
+                log(f"notebook save failed: {exc}")
+                return self._json(500, {"error": "Could not save. Your draft is kept; retry when connected."})
         if url.path in {"/api/sessions/action", "/api/sessions/adjust", "/api/preferences"}:
             try:
                 service = get_session_service()

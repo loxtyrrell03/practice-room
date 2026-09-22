@@ -194,7 +194,7 @@ def _make_block(booking, kind, title, mins, cursor, item=None, spot=None):
     return _block(booking, identity, kind, title, mins, cursor, item, spot)
 
 
-def reconcile(snapshot, state, academic, previous=None, spots=None, *, now=None, force=False):
+def reconcile(snapshot, state, academic, previous=None, spots=None, *, now=None, force=False, tasks=None):
     """Rebuild unfinished remainder inside exact usable reservation segments."""
     now = (now or datetime.now(UK)).astimezone(UK)
     previous = copy.deepcopy(previous or {"version": VERSION, "sessions": []})
@@ -212,7 +212,7 @@ def reconcile(snapshot, state, academic, previous=None, spots=None, *, now=None,
         return {**previous, "sync": {"status": "unavailable", "message": "Add repertoire before planning sessions."}}
     signature = fingerprint({"bookings": rows, "conflicts": snapshot.get("conflicts"), "covered": sorted(covered),
                              "pieces": state.get("pieces"), "coachBlocks": state.get("blocks"), "academic": academic,
-                             "spots": spots, "minute": now.strftime("%Y-%m-%dT%H:%M"), "lastAction": previous.get("lastActionAt")})
+                             "spots": spots, "tasks": tasks, "minute": now.strftime("%Y-%m-%dT%H:%M"), "lastAction": previous.get("lastActionAt")})
     if signature == previous.get("inputSignature") and not force:
         previous["sync"] = {"status": "current", "observedAt": snapshot.get("observedAt"), "coveredDates": sorted(covered)}
         return previous
@@ -220,11 +220,14 @@ def reconcile(snapshot, state, academic, previous=None, spots=None, *, now=None,
     by_key = {_key(b): b for b in rows}
     allocations = {c["key"]: 0.0 for c in candidates}
     last_done, recent, daily, sessions, protected = {}, {}, {}, [], []
+    task_visits = set()
     for sid, prior in old.items():
         outside = prior["date"] not in covered and sid not in by_key
         past = (booking_time(by_key[sid], True) if sid in by_key else instant(prior["end"])) <= now
         preserved = [b for b in prior.get("blocks", []) if _touched(b) or instant(b["end"]) <= now or outside]
         for block in preserved:
+            if block.get("taskId") and _touched(block):
+                task_visits.add((block["taskId"], prior["date"]))
             if not _touched(block) and instant(block["end"]) <= now:
                 block["status"] = "missed"
             if block["kind"] in WORK and (block.get("done") or block.get("status") in {"active", "paused"}):
@@ -321,8 +324,15 @@ def reconcile(snapshot, state, academic, previous=None, spots=None, *, now=None,
                 item = min(candidates, key=lambda c: (allocations[c["key"]]/c['allocationWeight']+
                     (12 if recent.get(c["key"]) == booking["date"] else 0)+
                     (12 if c['key'] == last_item else 0), c["key"]))
-                mins = min(25 if item["kind"] == "playing" else 15, remaining, max_active-daily[booking["date"]])
-                if remaining-mins < 5 and remaining <= 30:
+                followups = [t for t in (tasks or []) if t.get("status") == "open" and
+                    t.get("pieceId") == item["piece"]["id"] and
+                    (not t.get("movementId") or t["movementId"] == item["movement"].get("id")) and
+                    t.get("notBefore", "") <= booking["date"] and (t["id"], booking["date"]) not in task_visits]
+                task = min(followups, key=lambda t: (t.get("lastSeen", ""), t["id"])) if followups else None
+                if task:
+                    item = {**item, "kind": task.get("kind", "playing")}
+                mins = min(task["minutes"] if task else (25 if item["kind"] == "playing" else 15), remaining, max_active-daily[booking["date"]])
+                if not task and remaining-mins < 5 and remaining <= 30:
                     mins = min(remaining, max_active-daily[booking["date"]])
                 if mins < 5:
                     break
@@ -334,7 +344,12 @@ def reconcile(snapshot, state, academic, previous=None, spots=None, *, now=None,
                     s.get("movementId") == m.get("id") and s.get("status") in {"open", "watching"} and
                     str(s.get("lastSeen") or s.get("logged") or "")[:10] >= (now-timedelta(days=10)).date().isoformat()]
                 block = _make_block(booking, item["kind"], title, mins, cursor, item, matching[-1] if matching else None)
-                for step in item.get("coachSteps", [])[:2]:
+                if task:
+                    block.update(taskId=task["id"], title=title + " · " + task["title"],
+                                 steps=[{"lead": "Focus", "text": task["instruction"]},
+                                        {"lead": "Check", "text": "Return to the passage after another task and jot what changed."}])
+                    task_visits.add((task["id"], booking["date"]))
+                for step in ([] if task else item.get("coachSteps", [])[:2]):
                     if isinstance(step, dict) and step.get("text"):
                         block["steps"].insert(1, {"lead": "Coach focus", "text": str(step["text"])[:240]})
                 blocks.append(block)

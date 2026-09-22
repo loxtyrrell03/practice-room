@@ -11,6 +11,7 @@ import threading
 from academic_sessions import UK, apply_action, overview, reconcile
 from asimut_bookings import BookingImporter
 from practice_logs import atomic_write_json
+from practice_notebook import PracticeNotebook
 
 YEAR = "data/academic-year.json"
 SESSIONS = "data/sessions.json"
@@ -149,7 +150,8 @@ class SessionService:
         validate_academic_year(academic, state)
         validate_planning_state(state)
         result = reconcile(self.snapshot, state, academic, previous,
-                           read(self.root / "data/spots.json", {"spots": []}), force=force)
+                           read(self.root / "data/spots.json", {"spots": []}), force=force,
+                           tasks=PracticeNotebook(self.root, self.lock).load()["tasks"])
         if result != previous:
             atomic_write_json(self.root / SESSIONS, result)
         return result

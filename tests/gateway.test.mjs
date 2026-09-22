@@ -31,6 +31,10 @@ test('gateway serves planner while preserving score files and other service APIs
     assert.equal(await (await fetch(base+'/')).text(),'academic planner');
     assert.equal(await (await fetch(base+'/home')).text(),'preserved score home');
     assert.deepEqual(await (await fetch(base+'/api/meta?t=7')).json(),{planner:true,path:'/api/meta?t=7'});
+    for (const path of ['/api/notebook', '/api/notebook/note', '/api/notebook/task', '/api/notebook/stage']) {
+      const response = await fetch(base+path, path === '/api/notebook' ? {} : {method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+      assert.deepEqual(await response.json(), {planner:true,path});
+    }
     assert.deepEqual(await (await fetch(base+'/api/chess/state')).json(),{legacy:true,path:'/api/chess/state'});
     assert.equal((await fetch(base+'/',{method:'POST'})).status,405);
     const invalidHost = await new Promise((done,reject)=>{
