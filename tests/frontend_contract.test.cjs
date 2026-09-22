@@ -246,3 +246,89 @@ test("provisional months and shared deadlines are rendered from data", () => {
     "February 2027 + May 2027",
   );
 });
+
+test("coach history is partitioned at the academic-year boundary in London time without changing messages", () => {
+  const { context, run } = fixture();
+  context.messages = [
+    { ts: "2026-09-21T22:59:00Z", text: "Earlier programme" },
+    { ts: "2026-09-21T23:00:00Z", text: "First message of the new UK day" },
+    { ts: "2026-09-22T12:00:00Z", text: "Current practice" },
+    { ts: "invalid", text: "Uncertain date" },
+    { text: "No date recorded" },
+  ];
+  const original = JSON.stringify(context.messages);
+  assert.equal(
+    run('conversationGroups(messages,"2026-09-22").current.length'),
+    2,
+  );
+  assert.equal(
+    run('conversationGroups(messages,"2026-09-22").previous.length'),
+    3,
+  );
+  assert.equal(
+    run('conversationGroups(messages,"2026-09-22").current[0].text'),
+    "First message of the new UK day",
+  );
+  assert.equal(JSON.stringify(context.messages), original);
+});
+
+test("earlier coach messages render only in a collapsed archive with a current-year empty prompt", () => {
+  const { context, run, elements } = fixture();
+  class Element {
+    constructor() {
+      this.children = [];
+      this.open = false;
+      this.scrollHeight = 0;
+      this.scrollTop = 0;
+      this.clientHeight = 500;
+    }
+    set innerHTML(value) {
+      this.html = value;
+      this.children = [];
+    }
+    get innerHTML() {
+      return this.html || "";
+    }
+    appendChild(child) {
+      this.children.push(child);
+      return child;
+    }
+    append(...children) {
+      this.children.push(...children);
+    }
+    querySelector(selector) {
+      return (
+        this.children.find((child) => selector === "." + child.className) ||
+        null
+      );
+    }
+    querySelectorAll() {
+      return [];
+    }
+  }
+  elements.thread = new Element();
+  context.makeElement = () => new Element();
+  run(
+    'document.createElement=makeElement;academic.startDate="2026-09-22";docs[FILES.chat]={obj:{messages:[{ts:"2026-08-01T12:00:00Z",text:"Old programme instruction"}]}};bubble=message=>({className:"msg",text:message.text});renderCoach()',
+  );
+  const archive = elements.thread.children[0];
+  assert.equal(archive.className, "conversation-archive");
+  assert.equal(archive.open, false);
+  assert.match(
+    archive.children[0].textContent,
+    /Previous programme conversations/,
+  );
+  assert.equal(
+    archive.children[2].children[0].text,
+    "Old programme instruction",
+  );
+  assert.equal(
+    elements.thread.children[1].className,
+    "empty-panel current-year-coach",
+  );
+  assert.match(elements.thread.children[1].innerHTML, /CURRENT ACADEMIC YEAR/);
+  assert.equal(run("chat().messages.length"), 1);
+  archive.open = true;
+  run("renderCoach()");
+  assert.equal(elements.thread.children[0].open, true);
+});

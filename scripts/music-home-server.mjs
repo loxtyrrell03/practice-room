@@ -1,6 +1,6 @@
 import { createReadStream, existsSync, statSync } from 'node:fs';
 import { createServer, request as proxyRequest } from 'node:http';
-import { extname, join, normalize, resolve } from 'node:path';
+import { extname, join, normalize, resolve, sep } from 'node:path';
 import { spawn } from 'node:child_process';
 
 const musicRoot = resolve(process.env.MUSIC_PRACTICE_SITE_ROOT || join(process.cwd(), 'site'));
@@ -12,28 +12,37 @@ const legacyApiPort = Number(process.env.MUSIC_LEGACY_API_PORT || 8787);
 const plannerApi = new Set(['/api/health', '/api/meta', '/api/file', '/api/year', '/api/sessions', '/api/sessions/refresh', '/api/sessions/action', '/api/sessions/adjust', '/api/preferences', '/api/observations', '/api/chat']);
 const plannerAssets = new Set(['/', '/index.html', '/app.js', '/app.css', '/manifest.webmanifest', '/icon.svg', '/icon-192.png', '/icon-512.png', '/apple-touch-icon.png', '/sw.js']);
 let plannerChild = null;
+let plannerStarting = false;
 
 // The existing gateway remains on 8790; the planner's standard local backend
 // is supervised in place. Other APIs keep their existing 8787 destination.
 async function ensurePlanner() {
   const script = process.env.PRACTICE_SERVER_PATH;
   const python = process.env.PRACTICE_PYTHON;
-  if (!script || !python || plannerChild) return;
+  if (!script || !python || plannerChild || plannerStarting) return;
+  plannerStarting = true;
   try {
-    const response = await fetch(`http://127.0.0.1:${plannerPort}/api/health`, { signal: AbortSignal.timeout(2000) });
-    const info = await response.json();
-    if (info.app !== 'practice-room') console.error('Planner port belongs to another service; leaving it untouched.');
-    return;
-  } catch (error) {
-    if (error?.cause?.code !== 'ECONNREFUSED') return;
+    try {
+      const response = await fetch(`http://127.0.0.1:${plannerPort}/api/health`, { signal: AbortSignal.timeout(2000) });
+      const info = await response.json();
+      if (info.app !== 'practice-room') console.error('Planner port belongs to another service; leaving it untouched.');
+      return;
+    } catch (error) {
+      if (error?.cause?.code !== 'ECONNREFUSED') return;
+    }
+    const child = spawn(python, [script, '--no-browser'], {
+      cwd: resolve(script, '..'), windowsHide: true,
+      env: { ...process.env, BROWSER_NONE: '1', PRACTICE_SKIP_GIT_PULL: '1' },
+      stdio: ['ignore', 'inherit', 'inherit'],
+    });
+    plannerChild = child;
+    const clearChild = () => { if (plannerChild === child) plannerChild = null; };
+    child.on('error', error => { console.error('Planner launch failed:', error.message); clearChild(); });
+    child.on('exit', code => { console.error('Planner exited:', code); clearChild(); });
+    child.on('close', clearChild);
+  } finally {
+    plannerStarting = false;
   }
-  plannerChild = spawn(python, [script, '--no-browser'], {
-    cwd: resolve(script, '..'), windowsHide: true,
-    env: { ...process.env, BROWSER_NONE: '1', PRACTICE_SKIP_GIT_PULL: '1' },
-    stdio: ['ignore', 'inherit', 'inherit'],
-  });
-  plannerChild.on('error', error => console.error('Planner launch failed:', error.message));
-  plannerChild.on('exit', code => { console.error('Planner exited:', code); plannerChild = null; });
 }
 
 const contentTypes = {
@@ -44,6 +53,7 @@ const contentTypes = {
   '.jpg': 'image/jpeg',
   '.js': 'text/javascript; charset=utf-8',
   '.json': 'application/json; charset=utf-8',
+  '.webmanifest': 'application/manifest+json; charset=utf-8',
   '.map': 'application/json; charset=utf-8',
   '.pdf': 'application/pdf',
   '.png': 'image/png',
@@ -68,7 +78,7 @@ function resolveRequest(pathname, root) {
   ];
   for (const candidate of candidates) {
     const absolute = resolve(candidate);
-    if (absolute.startsWith(root) && existsSync(absolute) && statSync(absolute).isFile()) {
+    if (absolute.startsWith(root + sep) && existsSync(absolute) && statSync(absolute).isFile()) {
       return absolute;
     }
   }

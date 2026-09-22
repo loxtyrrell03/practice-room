@@ -396,7 +396,7 @@ function renderWeek() {
     `${dateLabel(dates[0], { day: "numeric", month: "short" })} – ${dateLabel(dates[6], { day: "numeric", month: "long" })}`;
   $("weekSubtitle").textContent = "Time for the work that matters next.";
   $("weekMetrics").innerHTML =
-    `<div><span>Booked this week ${help("Room capacity from the last complete ASIMUT check. It is not completed practice.")}</span><strong>${fmt(sum("bookedMinutes"))}</strong></div><div><span>Planned playing</span><strong>${fmt(sum("playingMinutes"))}</strong></div><div><span>Also in your sessions</span><strong class="smaller">${fmt(sum("studyMinutes"))} study · ${fmt(sum("restMinutes"))} rest & preparation</strong></div>`;
+    `<div><span>Booked in this plan ${help("Booked room time for the sessions shown this week. Earlier bookings without a saved session are not included.")}</span><strong>${fmt(sum("bookedMinutes"))}</strong></div><div><span>Planned playing</span><strong>${fmt(sum("playingMinutes"))}</strong></div><div><span>Also in your sessions</span><strong class="smaller">${fmt(sum("studyMinutes"))} study · ${fmt(sum("restMinutes"))} rest & preparation</strong></div>`;
   $("coverageNote").textContent =
     covered.length === 7
       ? "All 7 days checked"
@@ -796,8 +796,25 @@ function renderJournal() {
         .join("")
     : `<div class="empty-panel"><h2>${q ? "No matching entries" : "Your first useful review starts here"}</h2><p>${q ? "Try a piece name or another date." : "After a session, tell the coach what held up and what needs another approach."}</p>${button("Debrief with coach →", "data-journal-debrief", true)}</div>`;
 }
+function messageDate(message) {
+  if (!message.ts) return null;
+  const parsed = new Date(message.ts);
+  return Number.isNaN(parsed.getTime()) ? null : ukDate(parsed);
+}
+function conversationGroups(messages, startDate) {
+  const current = [],
+    previous = [];
+  messages.forEach((message) => {
+    const date = messageDate(message);
+    (date && (!startDate || date >= startDate) ? current : previous).push(
+      message,
+    );
+  });
+  return { current, previous };
+}
 function renderCoach(forceBottom = false) {
   const t = $("thread"),
+    archiveOpen = t.querySelector(".conversation-archive")?.open || false,
     nearBottom = t.scrollHeight - t.scrollTop - t.clientHeight < 90,
     scroll = t.scrollTop,
     activityScroll = new Map(
@@ -807,12 +824,34 @@ function renderCoach(forceBottom = false) {
       ]),
     );
   t.innerHTML = "";
-  const messages = chat().messages || [];
-  if (!messages.length) {
-    t.innerHTML =
-      '<div class="empty-panel"><h2>Turn observations into the next session.</h2><p>Tell your coach what held up, where it changed, and what you want to work on. Room-based scheduling keeps working while the coach thinks.</p></div>';
+  const { current, previous } = conversationGroups(
+    chat().messages || [],
+    academic.startDate || state().startDate,
+  );
+  if (previous.length) {
+    const archive = document.createElement("details");
+    archive.className = "conversation-archive";
+    archive.open = archiveOpen;
+    const summary = document.createElement("summary");
+    summary.textContent = `Previous programme conversations · ${previous.length} messages`;
+    const note = document.createElement("p");
+    note.className = "archive-context";
+    note.textContent =
+      "Earlier conversations, preserved for reference. They do not describe your current repertoire or practice plan.";
+    const history = document.createElement("div");
+    history.className = "archive-messages";
+    previous.forEach((message) => history.appendChild(bubble(message)));
+    archive.append(summary, note, history);
+    t.appendChild(archive);
   }
-  messages.forEach((m) => t.appendChild(bubble(m)));
+  if (!current.length) {
+    const empty = document.createElement("div");
+    empty.className = "empty-panel current-year-coach";
+    empty.innerHTML =
+      '<div class="eyebrow">CURRENT ACADEMIC YEAR</div><h2>Turn today’s practice into the next useful step.</h2><p>Tell your coach what held up, where it changed, and what you want to work on next.</p>';
+    t.appendChild(empty);
+  }
+  current.forEach((m) => t.appendChild(bubble(m)));
   t.querySelectorAll(".coach-activity").forEach((el, i) => {
     el.scrollTop = activityScroll.get(i) || 0;
   });
@@ -1391,6 +1430,22 @@ function bubble(m) {
   who.className = "who";
   who.textContent = m.role === "user" ? cfg.name || "you" : "coach";
   head.appendChild(who);
+  const stamp = document.createElement("time");
+  stamp.className = "msg-date";
+  if (messageDate(m)) {
+    stamp.dateTime = m.ts;
+    stamp.textContent = new Date(m.ts).toLocaleString("en-GB", {
+      timeZone: "Europe/London",
+      day: "numeric",
+      month: "short",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  } else {
+    stamp.textContent = "Date unknown";
+  }
+  head.appendChild(stamp);
   if (m.role === "coach") {
     const job = (coachQueue.jobs || []).find(
       (item) => item.messageId === m.replyTo || item.replyId === m.id,

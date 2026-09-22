@@ -26,6 +26,7 @@ The established phone address is https://lox-pc.tail89d19b.ts.net:10000/. Deploy
 ```powershell
 python -m unittest discover -s tests -v
 node --check app.js
+node --test tests/frontend_contract.test.cjs tests/gateway.test.mjs
 node --check scripts/music-home-server.mjs
 ```
 

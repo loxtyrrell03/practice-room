@@ -1037,6 +1037,37 @@ dialog::backdrop {
 .msg-head .who {
   margin-bottom: 0;
 }
+.msg-date {
+  color: var(--mut);
+  font-size: 0.64rem;
+  font-weight: 400;
+  line-height: 1.4;
+}
+.conversation-archive {
+  flex: none;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  color: var(--mut);
+}
+.conversation-archive > summary {
+  cursor: pointer;
+  font-size: 0.8rem;
+  color: var(--ink2);
+}
+.archive-context {
+  margin: 15px 0;
+  font-size: 0.78rem;
+  color: var(--mut);
+}
+.archive-messages {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.current-year-coach {
+  flex: none;
+}
 .response-model {
   color: var(--mut);
   font-size: 0.67rem;
