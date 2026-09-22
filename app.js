@@ -497,10 +497,11 @@ function renderToday() {
       rows.find((s) =>
         s.blocks?.some((b) => ["active", "paused"].includes(b.status)),
       ) || rows.find((s) => new Date(s.end) > new Date());
-  const day = sessionsDoc.days?.find((d) => d.date === date);
-  const target = sessionsDoc.dailyTargetMinutes || { min: 240, max: 360 };
-  $("todayContent").innerHTML =
-    `<div class="today-capacity"><strong>${fmt(day?.bookedMinutes || 0)} booked</strong><span>${fmt(day?.playingMinutes || 0)} planned playing · ${fmt(day?.studyMinutes || 0)} study</span><span>Daily aspiration ${fmt(target.min)}–${fmt(target.max)} ${help("The aspiration includes focused playing and study. Rest and preparation are separate. Missing booked time is not a debt to repay.")}</span></div>${next ? `<div class="session-detail today-session">${sessionDetail(next)}</div>` : (rows.length ? '<div class="empty-panel"><h2>Today’s room bookings have ended.</h2></div>' : emptySessions(date)) + priorityPanel(date)}`;
+  $("todayContent").innerHTML = next
+    ? `<div class="session-detail today-session">${sessionDetail(next)}</div>`
+    : rows.length
+      ? `<div class="empty-panel"><h2>Today’s room bookings have ended.</h2>${button("Open repertoire →", 'data-switch="programme"')}</div>`
+      : emptySessions(date);
   wireNotes($("todayContent"));
 }
 function drafts() {
