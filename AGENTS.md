@@ -44,7 +44,23 @@ The previous single-recital countdown is retired. Exact assessment dates may be 
 
 ## Phone service contract
 
-The permanent hostname is lox-pc and the planner URL is https://lox-pc.tail89d19b.ts.net:10000/. Preserve Tailscale identity and every unrelated Serve/Funnel route. Do not reset or reinstall shared hosting.
+<!-- USER-PHONE-SERVICE-CONTRACT -->
+### Universal phone-service identity and ownership
+
+- Owner instruction, 2026-09-14: this PC's permanent Tailscale name is `lox-pc`, with canonical DNS `lox-pc.tail89d19b.ts.net`. Use this one hostname for all hosted phone apps. Do not rename the Tailscale device, adopt the Windows computer name, use `windows-t8v5137`, `gaming-pc`, or `lox-1` for new links/builds, or change the Windows hostname to repair an app. A future hostname/port/path/runtime migration requires an explicit owner request for that migration; ordinary app work, deployment, troubleshooting, and requests to make a service work do not authorize it.
+- Preserve these existing private HTTPS routes and their loopback services:
+  - En Croissant: `https://lox-pc.tail89d19b.ts.net/` -> `127.0.0.1:8786` controller -> `127.0.0.1:8787` home server.
+  - Show Streamer / Stream Finder: `https://lox-pc.tail89d19b.ts.net/streamer/` -> `127.0.0.1:8792`.
+  - AsimutBooker: `https://lox-pc.tail89d19b.ts.net:10443/` -> `127.0.0.1:8794`.
+  - Supper: `https://lox-pc.tail89d19b.ts.net:11443/` -> `127.0.0.1:4318`.
+  - Practice Room: `https://lox-pc.tail89d19b.ts.net:10000/` -> `127.0.0.1:8790`; its proxied API uses the En Croissant home server.
+  - Outpost promotional site: `https://lox-pc.tail89d19b.ts.net:4174/` -> `127.0.0.1:4174`.
+  - Jellyfin: `https://lox-pc.tail89d19b.ts.net:8096/` -> `127.0.0.1:8096`.
+- Before any hosting change, compare live `tailscale status --json` and `tailscale serve status --json` with this contract. A mismatch is a fault to diagnose, never a reason to silently redefine the contract. Never reset Serve or Funnel, reassign occupied routes, enable public Funnel, reinstall shared hosting, or move/copy a live runtime as incidental project work. Preserve unrelated routes, including legacy compatibility handlers and the separate engine/SMS endpoints.
+- Preserve the existing scheduled tasks, headless supervisors, runtime directories, ownership, credentials, sessions, databases, downloads and browser-origin storage. Discover the actual listener and launcher before restarting only the intended service. Source checkouts and serving copies can differ; a deploy must preserve the serving copy's state and intended version. Check active work before a restart; Streamer requires 60 continuous seconds of complete idle evidence and an immediate pre-stop recheck. Explicit user On/Off choices remain authoritative; do not routinely force disabled services on.
+- Configure each app's allowed Host/Origin, advertised phone URL and compiled PWA origin consistently. Verify the actual HTTPS session/bootstrap/data API and a rendered connected app after a change; a page title or HTTP 200 from the static shell/health endpoint alone does not prove the app works. Never claim physical-phone verification from a PC browser check. Write out full canonical URLs when the owner asks for links.
+- The 2026-09-14 repair aligns Booker's server and PWA to `lox-pc`, refreshes its expired local assistant executable path, and restores En Croissant's requested enabled state. Historical per-repository notes using other hostnames are superseded by this contract. Keep this block in the universal guidance and the canonical repository root guidance.
+<!-- /USER-PHONE-SERVICE-CONTRACT -->
 
 The existing MusicPracticeHomeServer gateway stays on 127.0.0.1:8790. `scripts/music-home-server.mjs` routes only the explicit planner API set to 8977 and supervises that backend; all other API requests keep their existing En Croissant 8787 destination. Stockfish proxy routing remains intact. Static planner assets live in the existing service's site/planner subdirectory; old score-app files and browser storage stay preserved.
 
@@ -58,4 +74,4 @@ At every coherent verified milestone inspect Git state, commit only relevant fil
 
 ## Current verification milestone
 
-The academic-year reset is committed in the private repository. Source integration has passed the existing regression suite plus synthetic importer/scheduler/service tests; deployment and rendered browser validation are performed separately and recorded after completion. Source-only checks do not establish the live phone app.
+The academic-year reset is committed in the private repository. The backend passed 148 Python tests. The approved week-first frontend passed eight focused contract tests and synthetic browser interaction checks at desktop and 390-pixel width, including explicit timer actions and draft preservation. Deployment and rendered live HTTPS validation are recorded separately after completion; these source checks do not establish the live phone app.

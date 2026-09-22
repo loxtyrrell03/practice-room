@@ -1,1502 +1,1286 @@
-/* Practice Room — app */
+/* Practice Room · academic year, booking-led sessions */
 "use strict";
-
-const PRIVATE_ORIGIN = "https://lox.tail89d19b.ts.net:10000";
+const PRIVATE_ORIGIN = "https://lox-pc.tail89d19b.ts.net:10000";
 const FILES = {
-  state:"data/state.json",
-  dayPlans:"data/day-plans.json",
-  weekly:"data/weekly-plan.json",
-  chat:"data/chat.json",
-  journal:"data/journal.json",
-  memory:"memory/MEMORY.md",
-  spots:"data/spots.json",
-  obs:"data/observations.json"
+  state: "data/state.json",
+  chat: "data/chat.json",
+  journal: "data/journal.json",
+  memory: "memory/MEMORY.md",
+  spots: "data/spots.json",
+  obs: "data/observations.json",
+  weekly: "data/weekly-plan.json",
 };
 const $ = (id) => document.getElementById(id);
-
-let cfg = null;           // {name}
-let docs = {};            // path -> {obj|text, sha}
-let pollTimer = null;
-let currentView = "today";
-let coachQueue = {pending:0, processing:0, failed:0, jobs:[]};
-let coachActivity = {};
-let coachModels = [];
-let coachSelection = {provider:"anthropic", model:"claude-opus-5", effort:"medium"};
-const COACH_MODEL_STORAGE_KEY = "practice-room-coach-model-v2";
-const expandedActivities = new Set();
-const phaseOpenState = new Map();
-let selectedPlanDay = null;
-
-/* ── Private backend ─────────────────────────────────────── */
-async function ghGet(path, {fresh=false} = {}){
-  const suffix = fresh ? `&t=${Date.now()}` : "";
-  const r = await fetch(`/api/file?path=${encodeURIComponent(path)}${suffix}`, {cache:"no-store"});
-  if (!r.ok) throw new Error(`Read failed (${r.status}) for ${path}`);
-  const text = (await r.json()).content;
-  return { obj: path.endsWith(".json") ? JSON.parse(text) : text, sha: null };
+let cfg = { name: "you" },
+  docs = {},
+  sessionsDoc = { sessions: [], days: [], sync: { status: "unavailable" } },
+  academic = {};
+let currentView = "week",
+  selectedDate = null,
+  selectedSessionId = null,
+  weekStart = null,
+  pieceFilter = "all",
+  pollTimer = null;
+let coachQueue = { pending: 0, processing: 0, failed: 0, jobs: [] },
+  coachActivity = {},
+  coachModels = [];
+let coachSelection = {
+  provider: "anthropic",
+  model: "claude-opus-5",
+  effort: "medium",
+};
+const COACH_MODEL_STORAGE_KEY = "practice-room-coach-model-v2",
+  expandedActivities = new Set(),
+  openBlockIds = new Set();
+let focusRef = null,
+  focusActionError = "",
+  busyAction = false,
+  refreshing = false,
+  offline = false,
+  adjustSessionId = null,
+  helpPinned = false,
+  helpAnchor = null;
+const CACHE_KEY = "practice-room-academic-cache-v1",
+  DRAFT_KEY = "practice-room-note-drafts-v1",
+  TIMER_KEY = "practice-room-booking-timer-v1";
+const statusNames = {
+  planned: "Planned",
+  active: "In progress",
+  paused: "Paused",
+  done: "Completed",
+  skipped: "Skipped",
+  missed: "Missed",
+};
+const kindNames = {
+  playing: "Playing",
+  study: "Off-bench study",
+  setup: "Preparation",
+  break: "Rest",
+  close: "Log & leave",
+};
+function esc(value) {
+  return String(value ?? "").replace(
+    /[&<>"']/g,
+    (c) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[
+        c
+      ],
+  );
 }
-
-/* mutate = fn(freshObj) -> newObj */
-async function ghPut(path, mutate, message){
-  const cur = await ghGet(path, {fresh:true});
-  const next = mutate(structuredClone(cur.obj));
-  const r = await fetch("/api/file", { method:"POST", headers:{"Content-Type":"application/json"},
-    body: JSON.stringify({ path, content: JSON.stringify(next, null, 2) + "\n" }) });
-  if (!r.ok) throw new Error(`Save failed (${r.status})`);
-  docs[path] = { obj: next, sha: null };
-  return next;
-}
-
-/* ── boot ────────────────────────────────────────────────── */
-window.addEventListener("DOMContentLoaded", async () => {
-  wireChrome();
-  localStorage.removeItem("practice-room-config");
-  if (location.hash) history.replaceState(null, "", location.pathname + location.search);
+function readLocal(key, fallback) {
   try {
-    const r = await fetch(`/api/meta?t=${Date.now()}`, {cache:"no-store"});
-    const m = r.ok ? await r.json() : null;
-    if (!m || m.mode !== "local") throw new Error("private backend unavailable");
-    cfg = { name: m.name || "you", practiceLogs: m.practiceLogs || null };
-    coachQueue = m.coachQueue || coachQueue;
-    coachActivity = m.coachActivity || {};
-    configureCoachModels(m);
-    return start();
+    return JSON.parse(localStorage.getItem(key)) ?? fallback;
   } catch {
-    if (location.origin !== PRIVATE_ORIGIN) location.replace(PRIVATE_ORIGIN + "/");
-  }
-});
-
-/* live refresh: keep the page current when the coach updates files */
-setInterval(() => {
-  if (cfg && !pollTimer && document.visibilityState === "visible"
-      && focusIdx === null && !document.activeElement.matches("input, textarea")){
-    refreshQuiet();
-  }
-}, 25000);
-
-function wireChrome(){
-  document.querySelectorAll(".tab").forEach(btn =>
-    btn.addEventListener("click", () => switchView(btn.dataset.view)));
-  $("refreshBtn").addEventListener("click", () => start());
-  $("send").addEventListener("click", sendMessage);
-  wireModelPicker();
-  $("input").addEventListener("keydown", e => {
-    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) sendMessage();
-  });
-  $("debriefBtn").addEventListener("click", () => {
-    switchView("coach");
-    $("input").value = "Debrief: ";
-    $("input").focus();
-  });
-  document.querySelectorAll(".chip.q").forEach(c =>
-    c.addEventListener("click", () => { $("input").value = c.dataset.q; $("input").focus(); }));
-  $("memBtn").addEventListener("click", toggleMemory);
-  $("focusBtn").addEventListener("click", () => openFocus());
-  $("mobileFocusBtn").addEventListener("click", () => openFocus());
-  $("viewPlanBtn").addEventListener("click", () => {
-    selectedPlanDay = dayInfo().day + 1;
-    renderWeekPlan();
-    switchView("week");
-  });
-  window.addEventListener("focus", () => { if (cfg && !pollTimer) refreshQuiet(); });
-  window.addEventListener("pageshow", tickTimer);
-  document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "visible") tickTimer();
-  });
-}
-
-async function loadAll(){
-  const [st, ch, jr] = await Promise.all([
-    ghGet(FILES.state, {fresh:true}), ghGet(FILES.chat, {fresh:true}), ghGet(FILES.journal, {fresh:true}),
-  ]);
-  docs[FILES.state] = st; docs[FILES.chat] = ch; docs[FILES.journal] = jr;
-  try { docs[FILES.dayPlans] = await ghGet(FILES.dayPlans, {fresh:true}); } catch { docs[FILES.dayPlans] = {obj:{version:1,plans:[]}, sha:null}; }
-  try { docs[FILES.weekly] = await ghGet(FILES.weekly, {fresh:true}); } catch { docs[FILES.weekly] = {obj:{phases:[]}, sha:null}; }
-  try { docs[FILES.spots] = await ghGet(FILES.spots, {fresh:true}); } catch { docs[FILES.spots] = {obj:{spots:[]}, sha:null}; }
-  try { docs[FILES.obs] = await ghGet(FILES.obs, {fresh:true}); } catch { docs[FILES.obs] = {obj:{obs:[]}, sha:null}; }
-  try { localStorage.setItem("pr-cache", JSON.stringify({
-    s: st.obj, dp: docs[FILES.dayPlans].obj, w: docs[FILES.weekly].obj,
-    c: ch.obj, j: jr.obj, sp: docs[FILES.spots].obj })); } catch {}
-}
-
-function showApp(){
-  $("tabs").hidden = false;
-  restoreTimer();
-  renderAll();
-  switchView(currentView);
-  tickTimer();
-  if (coachQueue.pending || coachQueue.processing) startPolling();
-}
-
-async function start(){
-  banner("");
-  let lastErr = null;
-  for (let i = 0; i < 3; i++){
-    try { await loadAll(); return showApp(); }
-    catch (e){ lastErr = e; await new Promise(r => setTimeout(r, 1200 * (i + 1))); }
-  }
-  // Never replace the working surface with setup UI. Use the last complete snapshot.
-  let cached = null;
-  try { cached = JSON.parse(localStorage.getItem("pr-cache")); } catch {}
-  if (cached){
-    docs[FILES.state]   = { obj: cached.s,  sha: null };
-    docs[FILES.dayPlans] = { obj: cached.dp || {version:1,plans:[]}, sha: null };
-    docs[FILES.weekly]  = { obj: cached.w || {phases:[]}, sha: null };
-    docs[FILES.chat]    = { obj: cached.c,  sha: null };
-    docs[FILES.journal] = { obj: cached.j,  sha: null };
-    docs[FILES.spots]   = { obj: cached.sp || {spots:[]}, sha: null };
-    showApp();
-    banner(`Can't reach the Practice Room server (${lastErr.message}) — showing your last-loaded data. Tap refresh to retry.`, true);
-  } else {
-    $("tabs").hidden = false;
-    banner(`${lastErr.message} — the laptop server is not reachable. Tap refresh after it wakes.`, true);
+    return fallback;
   }
 }
-
-async function refreshQuiet(){
+function saveLocal(key, value) {
   try {
-    const [st, ch, jr, meta] = await Promise.all([
-      ghGet(FILES.state, {fresh:true}), ghGet(FILES.chat, {fresh:true}), ghGet(FILES.journal, {fresh:true}),
-      fetch(`/api/meta?t=${Date.now()}`, {cache:"no-store"}).then(r => r.json()),
-    ]);
-    docs[FILES.state] = st; docs[FILES.chat] = ch; docs[FILES.journal] = jr;
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {}
+}
+function state() {
+  return docs[FILES.state]?.obj || { pieces: [], today: { blocks: [] } };
+}
+function chat() {
+  return docs[FILES.chat]?.obj || { messages: [] };
+}
+function journal() {
+  return docs[FILES.journal]?.obj || { entries: [] };
+}
+function ukDate(value = new Date()) {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Europe/London",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date(value));
+}
+function dateObj(date) {
+  return new Date(date + "T12:00:00Z");
+}
+function dayOffset(date, days) {
+  const d = dateObj(date);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+function monday(date) {
+  const d = dateObj(date);
+  return dayOffset(date, -((d.getUTCDay() + 6) % 7));
+}
+function dateLabel(
+  date,
+  options = { weekday: "long", day: "numeric", month: "long" },
+) {
+  return dateObj(date).toLocaleDateString("en-GB", options);
+}
+function clockLabel(value) {
+  const d = new Date(value);
+  return Number.isNaN(d.getTime())
+    ? "Time unknown"
+    : d.toLocaleTimeString("en-GB", {
+        timeZone: "Europe/London",
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+}
+function fmt(mins) {
+  const m = Math.max(0, Math.round(Number(mins) || 0));
+  return m >= 60
+    ? `${Math.floor(m / 60)} h${m % 60 ? ` ${m % 60} min` : ""}`
+    : `${m} min`;
+}
+function currentSession() {
+  return sessionsDoc.sessions.find((s) => s.id === selectedSessionId);
+}
+function focusItems() {
+  const session = sessionsDoc.sessions.find(
+    (s) => s.id === focusRef?.sessionId,
+  );
+  return {
+    session,
+    block: session?.blocks.find((b) => b.id === focusRef?.blockId),
+  };
+}
+function help(text, label = "About this") {
+  return `<button type="button" class="help-button" data-help="${esc(text)}" aria-label="${esc(label)}">?</button>`;
+}
+function button(label, attrs = "", primary = false) {
+  return `<button class="button ${primary ? "primary" : "secondary"}" ${attrs}>${label}</button>`;
+}
+async function api(path, body) {
+  const r = await fetch(path, {
+    cache: "no-store",
+    ...(body === undefined
+      ? {}
+      : {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        }),
+  });
+  let payload;
+  try {
+    payload = await r.json();
+  } catch {
+    payload = {};
+  }
+  if (!r.ok)
+    throw new Error(
+      payload.error ||
+        payload.message ||
+        `Request failed (${r.status}). Your saved work is kept.`,
+    );
+  return payload;
+}
+async function ghGet(path) {
+  const r = await api(
+    `/api/file?path=${encodeURIComponent(path)}&t=${Date.now()}`,
+  );
+  return { obj: path.endsWith(".json") ? JSON.parse(r.content) : r.content };
+}
+function banner(text, isErr = false) {
+  const el = $("banner");
+  el.hidden = !text;
+  el.textContent = text || "";
+  el.classList.toggle("error", isErr);
+}
+function syncText() {
+  const sync = sessionsDoc.sync || {};
+  const time = sync.observedAt
+    ? new Date(sync.observedAt).toLocaleString("en-GB", {
+        timeZone: "Europe/London",
+        day: "numeric",
+        month: "short",
+        hour: "2-digit",
+        minute: "2-digit",
+      })
+    : "not yet checked";
+  return `${sync.status === "current" && !offline ? "ASIMUT · checked" : "Saved bookings · last check"} ${time}`;
+}
+function canStart(session, block) {
+  const now = new Date();
+  const valid =
+    !offline &&
+    sessionsDoc.sync?.status === "current" &&
+    session?.bookingStatus === "confirmed" &&
+    !session.needsAttention &&
+    new Date(session.start) <= now &&
+    new Date(session.end) > now;
+  if (!valid) return false;
+  if (block && typeof block.canStart === "boolean") return block.canStart;
+  if (!block && session.blocks?.some((b) => typeof b.canStart === "boolean"))
+    return session.blocks.some((b) => b.canStart || b.status === "active");
+  return !block || ["planned", "paused"].includes(block.status);
+}
+function canAdjust(session) {
+  return (
+    !offline &&
+    sessionsDoc.sync?.status === "current" &&
+    session?.bookingStatus === "confirmed" &&
+    new Date(session.end) > new Date()
+  );
+}
+function noStartReason(session) {
+  if (offline) return "Reconnect before starting a room session.";
+  if (session?.bookingStatus !== "confirmed" || session.needsAttention)
+    return (
+      session?.notice ||
+      "The booking changed or is no longer confirmed. Refresh before starting."
+    );
+  if (new Date(session.end) <= new Date())
+    return "This booking has ended. Past plans are not completed practice.";
+  if (new Date(session.start) > new Date())
+    return `Your room booking begins at ${clockLabel(session.start)}. You can review its plan now.`;
+  if (sessionsDoc.sync?.status !== "current")
+    return "Refresh ASIMUT to confirm the room and time before starting.";
+  return "The room is not available for a new block now. Check conflicts and your session limit.";
+}
+function saveCache() {
+  saveLocal(CACHE_KEY, {
+    docs,
+    sessionsDoc,
+    academic,
+    at: new Date().toISOString(),
+  });
+}
+async function loadAll() {
+  const results = await Promise.allSettled([
+    api("/api/sessions"),
+    api("/api/year"),
+    ghGet(FILES.state),
+    ghGet(FILES.chat),
+    ghGet(FILES.journal),
+    ghGet(FILES.spots),
+    ghGet(FILES.obs),
+    api("/api/meta"),
+    ghGet(FILES.weekly),
+  ]);
+  if (results[0].status === "rejected") throw results[0].reason;
+  sessionsDoc = results[0].value;
+  academic = results[1].status === "fulfilled" ? results[1].value : academic;
+  [FILES.state, FILES.chat, FILES.journal, FILES.spots, FILES.obs].forEach(
+    (file, i) => {
+      if (results[i + 2].status === "fulfilled")
+        docs[file] = results[i + 2].value;
+    },
+  );
+  if (results[8].status === "fulfilled") docs[FILES.weekly] = results[8].value;
+  if (results[7].status === "fulfilled") {
+    const meta = results[7].value;
+    cfg = { name: meta.name || "you" };
     coachQueue = meta.coachQueue || coachQueue;
     coachActivity = meta.coachActivity || coachActivity;
-    try { docs[FILES.dayPlans] = await ghGet(FILES.dayPlans, {fresh:true}); } catch {}
-    try { docs[FILES.weekly] = await ghGet(FILES.weekly, {fresh:true}); } catch {}
-    try { docs[FILES.spots] = await ghGet(FILES.spots, {fresh:true}); } catch {}
-    try { docs[FILES.obs] = await ghGet(FILES.obs, {fresh:true}); } catch {}
-    renderAll();
-  } catch {}
-}
-
-function switchView(v){
-  currentView = v;
-  document.querySelectorAll(".tab").forEach(b => b.classList.toggle("active", b.dataset.view === v));
-  ["today","week","programme","coach","journal"].forEach(x => $("view-"+x).hidden = (x !== v));
-  window.scrollTo({top:0, behavior:"auto"});
-  if (v === "coach"){ $("coachDot").hidden = true; scrollThread(); }
-}
-
-function banner(text, isErr){
-  const b = $("banner");
-  if (!text){ b.hidden = true; return; }
-  b.textContent = text; b.hidden = false;
-  b.style.borderColor = isErr ? "rgba(210,105,79,.5)" : "rgba(226,169,79,.4)";
-}
-
-/* ── rendering ───────────────────────────────────────────── */
-function state(){ return docs[FILES.state].obj; }
-function dayPlans(){ return ((docs[FILES.dayPlans] || {}).obj || {version:1, plans:[]}); }
-function chat(){ return docs[FILES.chat].obj; }
-function journal(){ return docs[FILES.journal].obj; }
-
-function dayInfo(){
-  const s = state();
-  const one = 24*3600*1000;
-  const today = new Date(); today.setHours(0,0,0,0);
-  const startD = new Date(s.startDate + "T00:00:00");
-  const recD = new Date(s.recitalDate + "T00:00:00");
-  const day = Math.floor((today - startD)/one) + 1;
-  const left = Math.round((recD - today)/one);
-  return { day, left, total: Math.round((recD - startD)/one) + 1 };
-}
-
-function isBreakBlock(block){
-  return String(block && block.id).startsWith("break");
-}
-
-function blockMinutes(block){
-  const mins = Number(block && block.mins);
-  return Number.isFinite(mins) && mins > 0 ? mins : 0;
-}
-
-function formatPracticeMinutes(mins){
-  const whole = Math.max(0, Math.ceil(mins));
-  const hours = Math.floor(whole / 60);
-  const rest = whole % 60;
-  if (!hours) return `${rest} min`;
-  return rest ? `${hours}h ${rest}m` : `${hours}h`;
-}
-
-function practiceTimeInfo(){
-  const practiceBlocks = (state().today.blocks || []).filter(b => !isBreakBlock(b));
-  const totalMins = practiceBlocks.reduce((sum, b) => sum + blockMinutes(b), 0);
-  let leftMins = practiceBlocks
-    .filter(b => !b.done)
-    .reduce((sum, b) => sum + blockMinutes(b), 0);
-
-  const active = timer && practiceBlocks.find(b => b.id === timer.blockId && !b.done);
-  if (active){
-    const activeMs = timer.paused ? timer.remainMs : timer.endsAt - Date.now();
-    leftMins += Math.max(0, activeMs) / 60000 - blockMinutes(active);
+    configureCoachModels(meta);
   }
-  return {totalMins, leftMins};
+  offline = false;
+  saveCache();
 }
-
-function renderPracticeTime(){
-  const total = $("practiceTotal"), left = $("practiceLeft");
-  if (!total || !left) return;
-  const time = practiceTimeInfo();
-  total.textContent = formatPracticeMinutes(time.totalMins);
-  left.textContent = formatPracticeMinutes(time.leftMins);
-}
-
-function renderAll(){
-  const broken = [];
-  [["header", renderTop], ["today", renderToday], ["week plan", renderWeekPlan], ["programme", renderProgramme],
-   ["coach", renderCoach], ["journal", renderJournal]].forEach(([name, fn]) => {
-    try { fn(); } catch (e){ broken.push(`${name}: ${e.message}`); }
-  });
+async function start() {
+  banner("");
   try {
-    const n = (state().today.blocks || []).length;
-    $("footLeft").textContent = `Practice Room · loaded ${new Date().toLocaleTimeString()} · ${n} blocks today`;
-  } catch {}
-  if (broken.length) banner("Display error (data is intact) — " + broken.join(" · "), true);
-}
-
-function renderTop(){
-  const {day, left} = dayInfo();
-  $("topCount").textContent = left > 0 ? `Day ${Math.max(day,1)} · ${left} day${left===1?"":"s"} to curtain`
-                          : left === 0 ? "Recital day" : "Post-recital";
-}
-
-function renderToday(){
-  const s = state(); const {day, left, total} = dayInfo();
-  const planDate = new Date(s.today.date + "T12:00:00");
-  const planIsToday = s.today.date === todayISO();
-  const blocks = s.today.blocks || [];
-  const completed = blocks.filter(block => block.done).length;
-  $("todayDate").textContent = fullPlanDate(planDate);
-  $("todayProgress").textContent =
-    `${completed} of ${blocks.length} blocks complete`;
-  $("todayState").hidden = planIsToday;
-  $("todayState").textContent = planIsToday
-    ? ""
-    : `✕ Wrong date · ${s.today.date}`;
-  $("dayNum").textContent = left === 0 ? "Recital day" : `Day ${Math.max(day,1)}`;
-  $("curtain").textContent = left > 0 ? `${left} day${left===1?"":"s"} to curtain` :
-    (left === 0 ? "Tonight. Trust the work." : "The bow has been taken.");
-  const dots = $("dots"); dots.innerHTML = "";
-  for (let i=1; i<=total; i++){
-    const el = document.createElement("i");
-    if (i < day) el.className = "past";
-    if (i === day) el.className = "now";
-    dots.appendChild(el);
-  }
-  $("focus").textContent = s.today.focus || "";
-  renderPracticeTime();
-
-  const gates = {7:"Gate day — run the Week 1 checklist with your coach tonight.",
-                 14:"Gate day — Week 2 checklist tonight. Programme decisions get made on today's numbers.",
-                 24:"Gate day — whole programme memorised + first full filmed run due. Checklist tonight.",
-                 34:"Final gate — last mock done, freeze tomorrow. Readiness check with your coach tonight."};
-  $("gateBanner").hidden = !gates[day];
-  if (gates[day]) $("gateBanner").textContent = gates[day];
-
-  // cold chips
-  const chipbox = $("coldChips"); chipbox.innerHTML = "";
-  s.pieces.forEach(p => {
-    const c = document.createElement("button");
-    const res = (p.lastCold && p.lastCold.date === todayISO()) ? p.lastCold.result : null;
-    c.className = "chip" + (res === "pass" ? " pass" : res === "fail" ? " fail" : "");
-    c.textContent = (res === "pass" ? "✓ " : res === "fail" ? "✕ " : "") + p.short;
-    c.addEventListener("click", () => cycleCold(p.id));
-    chipbox.appendChild(c);
-  });
-
-  // blocks
-  const wrap = $("blocks"); wrap.innerHTML = "";
-  blocks.forEach(b => {
-    try { renderBlockCard(wrap, b); }
-    catch (e){
-      const c = document.createElement("div");
-      c.className = "card block";
-      c.textContent = (b && b.title ? b.title : "block") + " — display error: " + e.message;
-      wrap.appendChild(c);
+    await loadAll();
+  } catch (e) {
+    const cache = readLocal(CACHE_KEY, null);
+    if (cache) {
+      docs = cache.docs || {};
+      sessionsDoc = cache.sessionsDoc || sessionsDoc;
+      academic = cache.academic || {};
     }
-  });
-}
-
-function renderWeekPlan(){
-  const wrap = $("weeks");
-  wrap.innerHTML = "";
-  const day = dayInfo().day;
-  const phases = resolvedPlanPhases(day);
-  renderForecast(phases, day);
-
-  if (!phases.length){
-    wrap.innerHTML = '<p class="sub">The weekly plan is not available in this snapshot.</p>';
-    return;
-  }
-
-  const current = phases.find(p => day >= Number(p.startDay) && day <= Number(p.endDay));
-  if (current){
-    $("weekLede").textContent = `Day ${Math.max(day,1)} · ${current.title}`;
-  } else {
-    $("weekLede").textContent = `Day ${Math.max(day,1)}`;
-  }
-
-  phases.forEach(phase => {
-    const status = day > Number(phase.endDay) ? "complete"
-      : day >= Number(phase.startDay) ? "current" : "upcoming";
-    const details = document.createElement("details");
-    details.className = `phase ${status}`;
-    details.dataset.phase = phase.id;
-    details.open = phaseOpenState.has(phase.id) ? phaseOpenState.get(phase.id) : false;
-    details.innerHTML = `
-      <summary>
-        <div class="phase-topline">
-          <span class="phase-label"></span>
-          <span class="phase-status ${status}"></span>
-        </div>
-        <h2 class="phase-title"></h2>
-        <div class="phase-range"></div>
-        <p class="phase-headline"></p>
-      </summary>
-      <div class="phase-details">
-        <section class="phase-section goals"><h3>Work of the phase</h3><ul></ul></section>
-        <section class="phase-section plan-gate"><h3></h3><ul></ul></section>
-      </div>`;
-    details.querySelector(".phase-label").textContent = phase.label || `Week ${phase.week}`;
-    const statusText = status === "complete" ? "✓ complete" : status === "current" ? "◆ current" : "○ upcoming";
-    details.querySelector(".phase-status").textContent = statusText;
-    details.querySelector(".phase-title").textContent = phase.title;
-    details.querySelector(".phase-range").textContent =
-      `Days ${phase.startDay}–${phase.endDay} · ${phase.dates}`;
-    details.querySelector(".phase-headline").textContent = phase.headline || "";
-    fillPlanList(details.querySelector(".goals ul"), phase.goals || []);
-    const gate = phase.gate || {};
-    details.querySelector(".plan-gate h3").textContent = gate.label || "End state";
-    const criteria = gate.criteria || [];
-    if (criteria.length) fillPlanList(details.querySelector(".plan-gate ul"), criteria);
-    else details.querySelector(".plan-gate").insertAdjacentHTML("beforeend", '<p class="no-gate">No separate gate. Protect the work already banked.</p>');
-    details.addEventListener("toggle", () => phaseOpenState.set(phase.id, details.open));
-    wrap.appendChild(details);
-  });
-}
-
-function resolvedPlanPhases(day){
-  const s = state();
-  let phases = ((((docs[FILES.weekly] || {}).obj || {}).phases) || [])
-    .map(p => structuredClone(p));
-
-  if (!phases.length && s.week){
-    phases = [{
-      id:`week-${s.week.num}`,
-      week:s.week.num,
-      label:`Week ${s.week.num}`,
-      title:s.week.title,
-      dates:s.week.dates,
-      startDay:day,
-      endDay:day,
-      headline:s.week.headline,
-      goals:s.week.goals || [],
-      gate:{label:"Current gate", criteria:s.week.gate || []}
-    }];
-  }
-
-  const currentWeek = s.week;
-  if (currentWeek){
-    const active = phases.find(p =>
-      Number(p.week) === Number(currentWeek.num) &&
-      day >= Number(p.startDay) && day <= Number(p.endDay));
-    if (active){
-      active.title = currentWeek.title || active.title;
-      active.dates = currentWeek.dates || active.dates;
-      active.headline = currentWeek.headline || active.headline;
-      active.goals = currentWeek.goals || active.goals;
-      active.gate = {
-        ...(active.gate || {}),
-        criteria:currentWeek.gate || (active.gate || {}).criteria || []
-      };
-    }
-  }
-  return phases;
-}
-
-function renderForecast(phases, currentDay){
-  const strip = $("dayStrip");
-  const panel = $("dayPlan");
-  strip.innerHTML = "";
-  panel.innerHTML = "";
-
-  const total = dayInfo().total;
-  const firstDay = Math.max(1, currentDay);
-  const lastDay = Math.min(total, currentDay + 6);
-  if (firstDay > lastDay){
-    panel.innerHTML = '<p class="forecast-empty">The recital has passed. The journal holds the completed run.</p>';
-    return;
-  }
-
-  if (!selectedPlanDay || selectedPlanDay < firstDay || selectedPlanDay > lastDay){
-    selectedPlanDay = firstDay;
-  }
-
-  for (let planDay = firstDay; planDay <= lastDay; planDay++){
-    const date = dateForPlanDay(planDay);
-    const isoDate = localISODate(date);
-    const dated = datedPlan(isoDate);
-    const isToday = planDay === currentDay;
-    const isTomorrow = planDay === currentDay + 1;
-    const phase = phases.find(p =>
-      planDay >= Number(p.startDay) && planDay <= Number(p.endDay));
-    const tabMeta = isToday
-      ? `${(state().today.blocks || []).filter(block => block.done).length}/${(state().today.blocks || []).length} done`
-      : dated && ["ready","active"].includes(dated.status)
-        ? `${(dated.blocks || []).length} blocks`
-        : phase ? phase.title : "";
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.id = `plan-day-${planDay}`;
-    btn.className = "day-tab" + (planDay === selectedPlanDay ? " selected" : "");
-    btn.setAttribute("role", "tab");
-    btn.setAttribute("aria-controls", "dayPlan");
-    btn.setAttribute("aria-selected", String(planDay === selectedPlanDay));
-    btn.innerHTML = `
-      <span class="day-tab-weekday"></span>
-      <strong></strong>
-      <span class="day-tab-meta"></span>`;
-    btn.querySelector(".day-tab-weekday").textContent =
-      isToday ? "Today" : isTomorrow ? "Tomorrow"
-        : date.toLocaleDateString("en-GB", {weekday:"short"});
-    btn.querySelector("strong").textContent =
-      date.toLocaleDateString("en-GB", {day:"numeric", month:"short"});
-    btn.querySelector(".day-tab-meta").textContent = tabMeta;
-    btn.addEventListener("click", () => {
-      selectedPlanDay = planDay;
-      renderForecast(phases, currentDay);
-      $(`plan-day-${planDay}`).scrollIntoView({block:"nearest", inline:"center"});
-    });
-    strip.appendChild(btn);
-  }
-
-  const selectedDate = dateForPlanDay(selectedPlanDay);
-  const selectedISO = localISODate(selectedDate);
-  const selectedDatedPlan = datedPlan(selectedISO);
-  const phase = phases.find(p =>
-    selectedPlanDay >= Number(p.startDay) && selectedPlanDay <= Number(p.endDay));
-  if (selectedPlanDay === currentDay){
-    renderActivePlan(panel, selectedDate, selectedPlanDay);
-  } else if (
-    selectedDatedPlan &&
-    ["ready","active"].includes(selectedDatedPlan.status) &&
-    (selectedDatedPlan.blocks || []).length
-  ){
-    renderReadyPlan(panel, selectedDate, selectedPlanDay, selectedDatedPlan);
-  } else if (selectedPlanDay === currentDay + 1){
-    renderTomorrowPlan(panel, selectedDate, selectedPlanDay);
-  } else {
-    renderRoughPlan(
-      panel, selectedDate, selectedPlanDay, phase, selectedDatedPlan
+    offline = true;
+    banner(
+      "Cannot reach Practice Room. Showing the last saved plan; your drafts are kept on this device.",
+      true,
     );
   }
-  panel.setAttribute("aria-labelledby", `plan-day-${selectedPlanDay}`);
+  selectedDate = selectedDate || sessionsDoc.today || ukDate();
+  weekStart = weekStart || monday(selectedDate);
+  restoreTimer();
+  renderAll();
+  if (coachQueue.pending || coachQueue.processing) startPolling();
 }
-
-function localISODate(date){
-  const shifted = new Date(date);
-  shifted.setMinutes(shifted.getMinutes() - shifted.getTimezoneOffset());
-  return shifted.toISOString().slice(0, 10);
-}
-
-function datedPlan(date){
-  return (dayPlans().plans || []).find(plan => plan.date === date) || null;
-}
-
-function dateForPlanDay(planDay){
-  const date = new Date(state().startDate + "T12:00:00");
-  date.setDate(date.getDate() + planDay - 1);
-  return date;
-}
-
-function fullPlanDate(date){
-  return date.toLocaleDateString("en-GB", {
-    weekday:"long", day:"numeric", month:"long"
-  });
-}
-
-function renderActivePlan(panel, date, planDay){
-  const blocks = state().today.blocks || [];
-  const completed = blocks.filter(block => block.done).length;
-  const mins = blocks.filter(block => !isBreakBlock(block))
-    .reduce((sum, block) => sum + blockMinutes(block), 0);
-  panel.className = "day-plan active";
-  panel.innerHTML = `
-    <div class="day-plan-top">
-      <div>
-        <h2></h2>
-      </div>
-      <div class="plan-day-number"></div>
-    </div>
-    <div class="active-plan-summary">
-      <strong></strong>
-      <span></span>
-      <button class="plan-link">Open today's working view →</button>
-    </div>
-    <div class="plan-schedule compact"></div>`;
-  panel.querySelector("h2").textContent = fullPlanDate(date);
-  panel.querySelector(".plan-day-number").textContent = `Day ${planDay}`;
-  panel.querySelector(".active-plan-summary strong").textContent =
-    `${completed} of ${blocks.length} done`;
-  panel.querySelector(".active-plan-summary span").textContent =
-    `${formatPracticeMinutes(mins)} total`;
-  panel.querySelector(".plan-link").textContent = "Open today →";
-  panel.querySelector(".plan-link").addEventListener("click", () => switchView("today"));
-  renderPlanSchedule(panel.querySelector(".plan-schedule"), blocks, {compact:true});
-}
-
-function renderReadyPlan(panel, date, planDay, plan){
-  const blocks = plan.blocks || [];
-  const mins = blocks.reduce((sum, block) => sum + blockMinutes(block), 0);
-  panel.className = "day-plan ready";
-  panel.innerHTML = `
-    <div class="day-plan-top">
-      <div>
-        <h2></h2>
-      </div>
-      <div class="plan-day-number"></div>
-    </div>
-    <div class="ready-plan-meta"></div>
-    <div class="plan-schedule"></div>
-    <section class="deferred-evidence" hidden>
-      <div>
-        <h3>For later</h3>
-      </div>
-      <div class="deferred-list"></div>
-    </section>`;
-  panel.querySelector("h2").textContent = fullPlanDate(date);
-  panel.querySelector(".plan-day-number").textContent = `Day ${planDay}`;
-  panel.querySelector(".ready-plan-meta").textContent =
-    `${formatPracticeMinutes(mins)} session · ${blocks.length} blocks`;
-  renderPlanSchedule(panel.querySelector(".plan-schedule"), blocks);
-  renderDeferredLogs(panel, plan.deferredLogs || []);
-}
-
-function renderPlanSchedule(root, blocks, {compact=false} = {}){
-  root.innerHTML = "";
-  blocks.forEach((block, index) => {
-    const row = document.createElement("section");
-    const isBreak = isBreakBlock(block);
-    row.className = `plan-block${isBreak ? " break" : ""}${block.done ? " complete" : ""}`;
-    row.innerHTML = `
-      <div class="plan-block-order"></div>
-      <div class="plan-block-main">
-        <div class="plan-block-heading">
-          <h3></h3>
-          <span class="plan-block-mins"></span>
-        </div>
-        <div class="plan-block-detail"></div>
-        <div class="plan-log-refs" hidden>
-          <strong>From today</strong>
-          <ul></ul>
-        </div>
-      </div>`;
-    row.querySelector(".plan-block-order").textContent =
-      block.done ? "✓" : String(index + 1).padStart(2, "0");
-    row.querySelector("h3").textContent = block.title || "Untitled block";
-    row.querySelector(".plan-block-mins").textContent = `${block.mins} min`;
-    const detail = row.querySelector(".plan-block-detail");
-    if (compact && !isBreak){
-      detail.textContent = block.done
-        ? "Completed on this date."
-        : "Still ahead on this date.";
-    } else {
-      renderBlockInstructions(detail, block);
-    }
-    const references = block.logRefs || [];
-    if (references.length){
-      const evidence = row.querySelector(".plan-log-refs");
-      evidence.hidden = false;
-      const list = evidence.querySelector("ul");
-      references.forEach(reference => {
-        const item = document.createElement("li");
-        item.textContent = reference.note;
-        list.appendChild(item);
-      });
-    }
-    root.appendChild(row);
-  });
-}
-
-function renderBlockInstructions(root, block){
-  const steps = Array.isArray(block.steps)
-    ? block.steps.filter(step => step && step.lead && step.text)
-    : [];
-  if (!steps.length){
-    root.textContent = block.detail || "";
-    return;
-  }
-  renderInstructionSteps(root, steps);
-}
-
-function renderInstructionSteps(root, steps){
-  root.innerHTML = "";
-  const list = document.createElement("ul");
-  list.className = "instruction-list";
-  steps.forEach(step => {
-    const item = document.createElement("li");
-    const lead = document.createElement("strong");
-    lead.textContent = step.lead;
-    const text = document.createElement("span");
-    text.textContent = step.text;
-    item.append(lead, text);
-    list.appendChild(item);
-  });
-  root.appendChild(list);
-}
-
-function renderProgrammeStatus(root, piece){
-  const points = Array.isArray(piece.statusPoints)
-    ? piece.statusPoints.filter(point => point && point.lead && point.text)
-    : [];
-  if (!points.length){
-    root.textContent = piece.note || "";
-    return;
-  }
-  renderInstructionSteps(root, points);
-  root.querySelector(".instruction-list")?.classList.add("programme-points");
-}
-
-function renderDeferredLogs(panel, deferredLogs){
-  if (!deferredLogs.length) return;
-  const section = panel.querySelector(".deferred-evidence");
-  section.hidden = false;
-  const list = section.querySelector(".deferred-list");
-  deferredLogs.forEach(item => {
-    const row = document.createElement("div");
-    row.className = "deferred-row";
-    const note = document.createElement("strong");
-    note.textContent = item.note || "Practice log";
-    const reason = document.createElement("span");
-    const target = new Date(item.targetDate + "T12:00:00");
-    reason.textContent =
-      `${fullPlanDate(target)} · ${item.reason}`;
-    row.append(note, reason);
-    list.appendChild(row);
-  });
-}
-
-function renderTomorrowPlan(panel, date, planDay){
-  const preview = String(state().tomorrowPreview || "").trim();
-  panel.className = "day-plan tomorrow";
-  panel.innerHTML = `
-    <div class="day-plan-top">
-      <div>
-        <h2></h2>
-      </div>
-      <div class="plan-day-number"></div>
-    </div>
-    <div class="tomorrow-body"></div>`;
-  panel.querySelector("h2").textContent = fullPlanDate(date);
-  panel.querySelector(".plan-day-number").textContent = `Day ${planDay}`;
-  const body = panel.querySelector(".tomorrow-body");
-  if (!preview){
-    body.innerHTML = '<p class="forecast-empty">No plan yet. Debrief tonight to build it.</p>';
-    return;
-  }
-  appendTomorrowPreview(body, preview);
-}
-
-function appendTomorrowPreview(body, preview){
-  const chunks = preview.split(/\n\s*\n/).map(x => x.trim()).filter(Boolean);
-  chunks.forEach((chunk, index) => {
-    const lines = chunk.split(/\n+/).map(x => x.trim()).filter(Boolean);
-    if (!lines.length) return;
-    if (index === 0){
-      const intro = document.createElement("p");
-      intro.className = "tomorrow-intro";
-      intro.textContent = lines.join(" ");
-      body.appendChild(intro);
-      return;
-    }
-
-    const section = document.createElement("section");
-    section.className = "tomorrow-section";
-    const headingMatch = lines[0].match(/^([A-Z][A-Z\s]+)\s+[—-]\s+(.+)$/);
-    if (headingMatch){
-      const heading = document.createElement("h3");
-      heading.textContent = headingMatch[1].trim();
-      section.appendChild(heading);
-      const lead = document.createElement("p");
-      lead.className = "tomorrow-section-lead";
-      lead.textContent = headingMatch[2].trim();
-      section.appendChild(lead);
-    }
-
-    const items = headingMatch ? lines.slice(1) : lines;
-    const list = document.createElement("ul");
-    items.forEach(text => {
-      const li = document.createElement("li");
-      li.textContent = text;
-      list.appendChild(li);
-    });
-    section.appendChild(list);
-    body.appendChild(section);
-  });
-}
-
-function renderRoughPlan(panel, date, planDay, phase, plan=null){
-  panel.className = "day-plan rough";
-  panel.innerHTML = `
-    <div class="day-plan-top">
-      <div>
-        <h2></h2>
-      </div>
-      <div class="plan-day-number"></div>
-    </div>
-    <div class="rough-phase">
-      <div class="rough-phase-label"></div>
-    </div>
-    <section class="rough-targets">
-      <h3>Current outline</h3>
-      <div class="rough-target-list"></div>
-    </section>`;
-  panel.querySelector("h2").textContent = fullPlanDate(date);
-  panel.querySelector(".plan-day-number").textContent = `Day ${planDay}`;
-  const targetRoot = panel.querySelector(".rough-target-list");
-  const outline = Array.isArray((plan || {}).outline) ? plan.outline : [];
-
-  if (!phase){
-    panel.querySelector(".rough-phase-label").textContent =
-      outline.length ? "Outline" : "No outline yet";
-    if (outline.length) renderInstructionSteps(targetRoot, outline);
-    else panel.querySelector(".rough-targets").remove();
-    return;
-  }
-
-  panel.querySelector(".rough-phase-label").textContent =
-    phase.title;
-
-  if (outline.length){
-    renderInstructionSteps(targetRoot, outline);
-  } else {
-    const goals = (phase.goals || [])
-      .filter(goal => !String(goal).trim().startsWith("✓"));
-    const exactDay = new RegExp(`\\bDay\\s+${planDay}\\b`, "i");
-    goals.sort((a, b) => Number(exactDay.test(b)) - Number(exactDay.test(a)));
-    const list = document.createElement("ul");
-    targetRoot.appendChild(list);
-    goals.slice(0, 4).forEach(goal => {
-      const li = document.createElement("li");
-      li.textContent = goal;
-      list.appendChild(li);
-    });
-    if (!list.children.length){
-      const li = document.createElement("li");
-      li.textContent =
-        "Protect the phase gains and use the next cold test to choose the work.";
-      list.appendChild(li);
-    }
-  }
-
-  const gate = phase.gate || {};
-  if (Number(gate.day) === planDay && (gate.criteria || []).length){
-    const callout = document.createElement("div");
-    callout.className = "plan-gate-callout";
-    const label = document.createElement("strong");
-    label.textContent = `◆ ${gate.label || "Gate day"}`;
-    const copy = document.createElement("span");
-    copy.textContent = "The coach will turn these criteria into tonight's checklist.";
-    callout.append(label, copy);
-    panel.querySelector(".rough-phase").after(callout);
-  }
-}
-
-function fillPlanList(list, items){
-  items.forEach(item => {
-    const li = document.createElement("li");
-    li.textContent = item;
-    list.appendChild(li);
-  });
-}
-
-function renderBlockCard(wrap, b){
-  {
-    const card = document.createElement("div");
-    const flag = FLAGS[b.flag] ? b.flag : null;
-    const isBreak = isBreakBlock(b);
-    const isStudy = String(b.id).startsWith("score-study");
-    const movementContext = blockMovementContext(b);
-    card.className = "card block" + (b.done ? " done" : "") + (flag ? " f-" + flag : "") +
-      (isBreak ? " breakblk" : "") + (isStudy ? " studyblk" : "");
-    card.innerHTML = `
-      <button class="tick" aria-label="mark done">${b.done ? "✓" : ""}</button>
-      <div class="b-body">
-        ${movementContext ? '<div class="movement-label"></div>' : ""}
-        <div class="card-head"><h2></h2>
-          <span class="head-right">${flag ? `<span class="ftag f-${flag}">${FLAGS[flag]}</span>` : ""}${isStudy ? '<span class="block-mode">off bench</span>' : ""}<span class="mins">${b.mins} min</span></span>
-        </div>
-        <div class="detail"></div>
-        <div class="b-actions">
-          <button class="timerbtn" data-block="${b.id}"></button>
-          ${isBreak ? "" : '<button class="whybtn">why this? →</button><button class="whybtn focuslink">focus →</button>'}
-        </div>
-        ${isBreak ? "" : NOTEBAR_HTML}
-      </div>`;
-    if (movementContext) card.querySelector(".movement-label").textContent = movementContext;
-    card.querySelector("h2").textContent = b.title;
-    renderBlockInstructions(card.querySelector(".detail"), b);
-    card.querySelector(".tick").addEventListener("click", () => toggleBlock(b.id));
-    const fl = card.querySelector(".focuslink");
-    if (fl) fl.addEventListener("click", () => openFocus(b.id));
-    wireNotebar(card, b);
-    const why = card.querySelector(".whybtn:not(.focuslink)");
-    if (why) {
-      why.addEventListener("click", () => {
-        switchView("coach");
-        $("input").value = `Why am I doing “${b.title}” today — what is it for, and how do I know it's working?`;
-        $("input").focus();
-      });
-    }
-    wireTimerButton(card.querySelector(".timerbtn"), b);
-    wrap.appendChild(card);
-  }
-}
-
-const NOTEBAR_HTML = '<div class="notebar"><input type="text" placeholder="Log it: e.g. RH too loud b.57" maxlength="300"><button class="notebtn">log</button></div><div class="obslist"></div>';
-
-function blockMovementContext(b){
-  if (!b.movementId || !b.movement) return "";
-  const piece = (state().pieces || []).find(p => p.id === b.pieceId);
-  return `${piece ? piece.short : b.pieceId} · ${b.movement}`;
-}
-
-function todaysObs(blockId){
-  const day = dayInfo().day;
-  return (((docs[FILES.obs] || {}).obj || {}).obs || []).filter(o => o.blockId === blockId && o.day === day);
-}
-
-function wireNotebar(root, b){
-  const bar = root.querySelector(".notebar");
-  if (!bar) return;
-  const input = bar.querySelector("input"), btn = bar.querySelector(".notebtn");
-  if (b.movement) input.placeholder = `Log ${b.movement}: e.g. RH too loud b.57`;
-  const submit = async () => {
-    const text = input.value.trim();
-    if (!text) return;
-    input.dataset.pendingId = input.dataset.pendingId || crypto.randomUUID();
-    btn.disabled = true;
-    const saved = await logObservation(b, text, input.dataset.pendingId);
-    btn.disabled = false;
-    if (saved){
-      input.value = "";
-      delete input.dataset.pendingId;
-    }
-  };
-  btn.addEventListener("click", submit);
-  input.addEventListener("keydown", e => { if (e.key === "Enter") submit(); });
-  const list = root.querySelector(".obslist");
-  if (list) todaysObs(b.id).slice(-3).forEach(o => {
-    const d = document.createElement("div");
-    d.className = "obsrow";
-    const note = document.createElement("span");
-    note.className = "obstext";
-    note.textContent = o.text;
-    const status = document.createElement("span");
-    status.className = "obsstatus s-" + (o.status || "pending");
-    const labels = {
-      pending: "✓ saved · pending",
-      processing: "↻ processing",
-      processed: "✓ processed",
-      failed: "! saved · failed · retrying"
-    };
-    status.textContent = labels[o.status] || labels.pending;
-    d.append(note, status);
-    list.appendChild(d);
-  });
-}
-
-async function logObservation(b, text, clientId){
-  text = (text || "").trim();
-  if (!text) return false;
+async function refreshQuiet() {
+  if (refreshing) return;
+  refreshing = true;
   try {
-    const r = await fetch("/api/observations", {
-      method:"POST",
-      headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({
-        clientId,
-        day:dayInfo().day,
-        blockId:b.id,
-        block:b.title,
-        pieceId:b.pieceId || null,
-        movementId:b.movementId || null,
-        movement:b.movement || null,
-        text
-      })
-    });
-    if (!r.ok) throw new Error("Practice log was not saved — try again.");
-    const result = await r.json();
-    const entry = result.observation;
-    const rows = (docs[FILES.obs].obj.obs = docs[FILES.obs].obj.obs || []);
-    const existing = rows.findIndex(o => o.id === entry.id);
-    if (existing >= 0) rows[existing] = entry;
-    else rows.push(entry);
-    renderToday();
-    if (focusIdx !== null) renderFocus();
-    return true;
-  } catch (e){
-    banner(e.message, true);
-    return false;
-  }
-}
-
-/* ── focus mode ── */
-let focusIdx = null;
-const FOCUS_STEP_STORAGE_KEY = "practice-room-focus-steps-v1";
-
-function focusSteps(block){
-  return Array.isArray(block.steps)
-    ? block.steps.filter(step => step && step.lead && step.text)
-    : [];
-}
-
-function focusStepKey(block, steps){
-  const date = (state().today || {}).date || todayISO();
-  const signature = steps.map(step => `${step.lead}\u001f${step.text}`).join("\u001e");
-  return `${date}\u001d${block.id}\u001d${signature}`;
-}
-
-function readFocusStepProgress(block, steps){
-  try {
-    const saved = JSON.parse(localStorage.getItem(FOCUS_STEP_STORAGE_KEY)) || {};
-    const value = saved[focusStepKey(block, steps)];
-    return steps.map((_, index) => Boolean(Array.isArray(value) && value[index]));
+    await loadAll();
+    renderAll();
+    if (!offline && $("banner").textContent.startsWith("Cannot reach"))
+      banner("");
+    if (
+      !sessionsDoc.refreshing &&
+      $("banner").textContent.startsWith("Checking ASIMUT")
+    )
+      banner(
+        sessionsDoc.sync?.status === "current"
+          ? "Bookings checked. Future sessions reflect the available room time."
+          : sessionsDoc.sync?.message ||
+              "Bookings could not be confirmed. Your previous plan is kept.",
+        sessionsDoc.sync?.status !== "current",
+      );
   } catch {
-    return steps.map(() => false);
+    offline = true;
+    renderSync();
+  } finally {
+    refreshing = false;
   }
 }
-
-function writeFocusStepProgress(block, steps, progress){
+async function refreshBookings() {
+  const b = $("refreshBtn");
+  b.disabled = true;
+  b.textContent = "Checking ASIMUT…";
   try {
-    const saved = JSON.parse(localStorage.getItem(FOCUS_STEP_STORAGE_KEY)) || {};
-    saved[focusStepKey(block, steps)] = progress.map(Boolean);
-    const keys = Object.keys(saved);
-    keys.slice(0, Math.max(0, keys.length - 80)).forEach(key => delete saved[key]);
-    localStorage.setItem(FOCUS_STEP_STORAGE_KEY, JSON.stringify(saved));
-  } catch {}
+    await api("/api/sessions/refresh", {});
+    banner("Checking ASIMUT. Your current work stays available.");
+    await refreshQuiet();
+  } catch (e) {
+    banner(e.message, true);
+  } finally {
+    renderSync();
+  }
 }
-
-function paintFocusProgress(root, progress){
-  const complete = progress.filter(Boolean).length;
-  const total = progress.length;
-  const bar = root.querySelector(".focus-progress-track");
-  root.querySelector(".focus-progress-count").textContent = `${complete} / ${total}`;
-  bar.setAttribute("aria-valuenow", String(complete));
-  bar.setAttribute("aria-valuemax", String(total));
-  bar.setAttribute("aria-valuetext", `${complete} of ${total} items complete`);
-  bar.querySelector("i").style.width = `${total ? complete / total * 100 : 0}%`;
-  root.querySelectorAll(".focus-step").forEach((item, index) => {
-    item.classList.toggle("complete", progress[index]);
+function switchView(v) {
+  if (!["today", "week", "programme", "coach", "journal"].includes(v)) return;
+  currentView = v;
+  document
+    .querySelectorAll(".tab")
+    .forEach((b) => b.classList.toggle("active", b.dataset.view === v));
+  document
+    .querySelectorAll(".view")
+    .forEach((el) => (el.hidden = el.id !== `view-${v}`));
+  document.body.classList.toggle("coach-open", v === "coach");
+  window.scrollTo({ top: 0, behavior: "instant" });
+  if (v === "coach") {
+    $("coachDot").hidden = true;
+    scrollThread();
+  }
+  if (v === "today") renderToday();
+}
+function renderAll() {
+  const editingNote = document.activeElement?.closest(".note-control");
+  if (!editingNote?.closest("#view-week")) renderWeek();
+  if (!editingNote?.closest("#view-today")) renderToday();
+  renderProgramme();
+  renderCoach();
+  renderJournal();
+  renderYear();
+  if (
+    focusRef &&
+    !["INPUT", "TEXTAREA"].includes(document.activeElement.tagName)
+  )
+    renderFocus();
+  tickTimer();
+}
+function renderSync() {
+  $("syncStatus").textContent = syncText();
+  $("syncStatus").className =
+    "status " +
+    (sessionsDoc.sync?.status === "current" && !offline ? "good" : "warning");
+  $("refreshBtn").disabled = !!sessionsDoc.refreshing;
+  $("refreshBtn").textContent = sessionsDoc.refreshing
+    ? "Checking ASIMUT…"
+    : "Refresh bookings";
+}
+function weekDates() {
+  return Array.from({ length: 7 }, (_, i) => dayOffset(weekStart, i));
+}
+function renderWeek() {
+  renderSync();
+  const dates = weekDates(),
+    days = (sessionsDoc.days || []).filter((d) => dates.includes(d.date));
+  const sum = (k) => days.reduce((n, d) => n + (Number(d[k]) || 0), 0);
+  const covered = dates.filter((d) =>
+    (sessionsDoc.sync?.coveredDates || []).includes(d),
+  );
+  $("weekTitle").textContent =
+    `${dateLabel(dates[0], { day: "numeric", month: "short" })} – ${dateLabel(dates[6], { day: "numeric", month: "long" })}`;
+  $("weekSubtitle").textContent = "Time for the work that matters next.";
+  $("weekMetrics").innerHTML =
+    `<div><span>Booked this week ${help("Room capacity from the last complete ASIMUT check. It is not completed practice.")}</span><strong>${fmt(sum("bookedMinutes"))}</strong></div><div><span>Planned playing</span><strong>${fmt(sum("playingMinutes"))}</strong></div><div><span>Also in your sessions</span><strong class="smaller">${fmt(sum("studyMinutes"))} study · ${fmt(sum("restMinutes"))} rest & preparation</strong></div>`;
+  $("coverageNote").textContent =
+    covered.length === 7
+      ? "All 7 days checked"
+      : `${covered.length} of 7 days checked · other dates are unknown`;
+  $("dayStrip").innerHTML = dates
+    .map((date) => {
+      const d = days.find((x) => x.date === date);
+      const known = covered.includes(date);
+      return `<button class="day-tab ${date === selectedDate ? "active" : ""}" data-date="${date}" aria-pressed="${date === selectedDate}"><span>${dateLabel(date, { weekday: "short" })}</span><strong>${dateObj(date).getUTCDate()}</strong><small>${known ? fmt(d?.bookedMinutes || 0) : "Unknown"}</small>${date === ukDate() ? '<i aria-label="Today"></i>' : ""}</button>`;
+    })
+    .join("");
+  const rows = sessionsDoc.sessions.filter((s) => s.date === selectedDate);
+  if (!rows.some((s) => s.id === selectedSessionId)) {
+    const active = rows.find((s) =>
+      s.blocks?.some((b) => ["active", "paused"].includes(b.status)),
+    );
+    selectedSessionId =
+      (active || rows.find((s) => new Date(s.end) > new Date()) || rows[0])
+        ?.id || null;
+  }
+  $("agendaDate").textContent = dateLabel(selectedDate, {
+    weekday: "long",
+    day: "numeric",
+    month: "short",
   });
+  $("sessionList").innerHTML = rows.length
+    ? rows.map(sessionRow).join("")
+    : emptySessions(selectedDate);
+  const session = currentSession();
+  $("sessionDetail").innerHTML = session
+    ? sessionDetail(session)
+    : priorityPanel(selectedDate);
+  wireNotes($("sessionDetail"));
 }
-
-function renderFocusChecklist(root, block, steps){
-  root.innerHTML = "";
-  const progress = readFocusStepProgress(block, steps);
-  const list = document.createElement("div");
-  list.className = "focus-checklist";
-  steps.forEach((step, index) => {
-    const label = document.createElement("label");
-    label.className = "focus-step";
-    const input = document.createElement("input");
-    input.type = "checkbox";
-    input.checked = progress[index];
-    input.setAttribute("aria-label", `${step.lead}: ${step.text}`);
-    const box = document.createElement("span");
-    box.className = "focus-step-box";
-    box.setAttribute("aria-hidden", "true");
-    const copy = document.createElement("span");
-    copy.className = "focus-step-copy";
-    const lead = document.createElement("strong");
-    lead.textContent = step.lead;
-    const text = document.createElement("span");
-    text.textContent = step.text;
-    copy.append(lead, text);
-    label.append(input, box, copy);
-    input.addEventListener("change", () => {
-      progress[index] = input.checked;
-      writeFocusStepProgress(block, steps, progress);
-      paintFocusProgress($("focusOverlay"), progress);
+function sessionRow(s) {
+  const done = s.blocks?.filter((b) => b.done).length || 0;
+  return `<button class="session-row ${s.id === selectedSessionId ? "selected" : ""}" data-session="${esc(s.id)}" aria-pressed="${s.id === selectedSessionId}"><span class="session-time">${clockLabel(s.start)}–${clockLabel(s.end)}</span><span class="session-room">${esc(s.room)}</span><span class="session-summary">${fmt(s.bookedMinutes)} booked${s.bookingStatus !== "confirmed" ? ` · ${esc(s.bookingStatus)}` : done ? ` · ${done} completed` : new Date(s.end) <= new Date() ? " · ended" : ""}</span><span class="row-arrow" aria-hidden="true">→</span></button>`;
+}
+function emptySessions(date) {
+  const covered = sessionsDoc.sync?.coveredDates?.includes(date);
+  return `<div class="empty-panel"><h3>${covered ? "No rooms booked" : "Bookings not yet known"}</h3><p>${covered ? "Keep the day useful with score study, or make a room booking in Booker." : "Refresh ASIMUT to see whether room time is available for this date."}</p><a class="text-button" href="https://lox-pc.tail89d19b.ts.net:10443/" target="_blank" rel="noopener">Open Booker ↗</a></div>`;
+}
+function priorityPanel(date) {
+  const pieces = (state().pieces || []).slice(0, 3);
+  return `<div class="empty-panel priority-panel"><div class="eyebrow">OFF-BENCH OPTIONS</div><h2>A useful next step</h2><p>These are unscheduled study ideas, not room reservations.</p>${pieces.map((p) => `<div class="priority-row"><h3>${esc(p.short || p.title)}</h3><p>${esc(p.planning?.focus || p.statusPoints?.find((x) => x.lead === "Next checkpoint")?.text || "Map one section in the score and note the question to test at the piano.")}</p></div>`).join("")}${button("Open repertoire →", 'data-switch="programme"')}</div>`;
+}
+function sessionTotals(s) {
+  const blocks = (s.blocks || []).filter(
+    (b) => !["missed", "skipped"].includes(b.status),
+  );
+  const sum = (k) =>
+    blocks
+      .filter((b) => k.includes(b.kind))
+      .reduce(
+        (n, b) =>
+          n + (Number(b.done ? (b.actualMinutes ?? b.mins) : b.mins) || 0),
+        0,
+      );
+  return {
+    playing: sum(["playing"]),
+    study: sum(["study"]),
+    rest: sum(["break"]),
+    prep: sum(["setup", "close"]),
+  };
+}
+function sessionDetail(s) {
+  const totals = sessionTotals(s);
+  const next =
+    s.blocks.find((b) => ["active", "paused"].includes(b.status)) ||
+    s.blocks.find((b) => !b.done && !["skipped", "missed"].includes(b.status));
+  const valid = canStart(s);
+  return `<div class="detail-heading"><div><div class="eyebrow">${esc(s.bookingStatus === "confirmed" ? "BOOKED SESSION" : s.bookingStatus)}</div><h2>${clockLabel(s.start)}–${clockLabel(s.end)}</h2><p>${esc(s.room)} · ${fmt(s.bookedMinutes)} booked</p></div>${help("Plans adapt automatically when confirmed room availability changes. Started and completed blocks, notes and tests are preserved.", "How sessions adapt")}</div>${s.notice ? `<div class="inline-notice">${esc(s.notice)}</div>` : ""}${!valid ? `<p class="inline-notice warning">${esc(noStartReason(s))}</p>` : ""}<div class="session-totals"><span>${fmt(totals.playing)} playing</span><span>${fmt(totals.study)} study</span><span>${fmt(totals.rest)} rest</span><span>${fmt(totals.prep)} preparation</span></div><div class="session-blocks">${s.blocks.map((b) => blockRow(s, b)).join("") || '<p class="muted">No blocks allocated in this window.</p>'}</div><div class="session-actions">${next ? button(["active", "paused"].includes(next.status) ? "Continue session →" : valid ? "Start session →" : "View session →", `data-focus-session="${esc(s.id)}" data-focus-block="${esc(next.id)}"`, true) : '<span class="status good">All blocks accounted for</span>'}${button("Shorten session", `data-adjust="${esc(s.id)}" ${!canAdjust(s) ? "disabled" : ""}`)}</div><p class="small muted">The timetable adapts to your bookings. A completed block records practice, not readiness.</p>`;
+}
+function blockRow(s, b) {
+  const terminal = b.done || ["skipped", "missed"].includes(b.status);
+  return `<details data-block-id="${esc(b.id)}" class="schedule-block ${esc(b.kind)} ${terminal ? "complete" : ""}" ${openBlockIds.has(b.id) || ["active", "paused"].includes(b.status) ? "open" : ""}><summary><time>${clockLabel(b.start)}</time><span><strong>${esc(b.title)}</strong><small>${esc(kindNames[b.kind] || b.kind)} · ${esc(statusNames[b.status] || "Planned")}</small></span><span class="block-minutes">${b.mins} min</span></summary><div class="block-detail">${instructions(b)}<div class="block-tools">${!terminal ? button(["active", "paused"].includes(b.status) ? "Continue" : "Open block", `data-focus-session="${esc(s.id)}" data-focus-block="${esc(b.id)}"`) : ""}${help(b.why || "This block fits within your booked time.", "Why this block?")}</div>${["playing", "study"].includes(b.kind) ? noteHTML(s, b) : ""}</div></details>`;
+}
+function instructions(b) {
+  const steps = (b.steps || []).filter((s) => s.text || typeof s === "string");
+  return steps.length
+    ? `<ol class="instruction-list">${steps.map((step) => `<li>${step.lead ? `<strong>${esc(step.lead)}</strong> ` : ""}${esc(step.text || step)}</li>`).join("")}</ol>`
+    : `<p>${esc(b.detail || "Use this time for the named task, then record what changed.")}</p>`;
+}
+function renderToday() {
+  const date = sessionsDoc.today || ukDate();
+  $("todayDate").textContent = dateLabel(date).toUpperCase();
+  const rows = sessionsDoc.sessions.filter((s) => s.date === date),
+    next =
+      rows.find((s) =>
+        s.blocks?.some((b) => ["active", "paused"].includes(b.status)),
+      ) || rows.find((s) => new Date(s.end) > new Date());
+  const day = sessionsDoc.days?.find((d) => d.date === date);
+  const target = sessionsDoc.dailyTargetMinutes || { min: 240, max: 360 };
+  $("todayContent").innerHTML =
+    `<div class="today-capacity"><strong>${fmt(day?.bookedMinutes || 0)} booked</strong><span>${fmt(day?.playingMinutes || 0)} planned playing · ${fmt(day?.studyMinutes || 0)} study</span><span>Daily aspiration ${fmt(target.min)}–${fmt(target.max)} ${help("The aspiration includes focused playing and study. Rest and preparation are separate. Missing booked time is not a debt to repay.")}</span></div>${next ? `<div class="session-detail today-session">${sessionDetail(next)}</div>` : (rows.length ? '<div class="empty-panel"><h2>Today’s room bookings have ended.</h2><p>Your recorded practice stays in the week view. A missed block is not marked complete.</p></div>' : emptySessions(date)) + priorityPanel(date)}`;
+  wireNotes($("todayContent"));
+}
+function drafts() {
+  return readLocal(DRAFT_KEY, {});
+}
+function noteHTML(s, b) {
+  const inputId = `note-${crypto.randomUUID()}`;
+  const draft = drafts()[b.id] || {};
+  const notes = (docs[FILES.obs]?.obj?.obs || [])
+    .filter((o) => o.blockId === b.id)
+    .slice(-3);
+  return `<div class="note-control" data-note-block="${esc(b.id)}" data-note-session="${esc(s.id)}"><label for="${inputId}">What happened?</label><div class="notebar"><input id="${inputId}" type="text" maxlength="300" placeholder="Passage, result, or next question…" value="${esc(draft.text || "")}"><button class="button secondary note-save">Save note</button></div><div class="note-result" role="status">${draft.text ? "Draft kept on this device" : ""}</div><div class="obslist">${notes.map((o) => `<div class="obsrow"><span>${esc(o.text)}</span><small>${esc({ pending: "Saved · awaiting coach", processing: "Saved · processing", processed: "Saved · reviewed", failed: "Saved · needs attention" }[o.status] || "Saved")}</small></div>`).join("")}</div>`;
+}
+function wireNotes(root) {
+  root.querySelectorAll(".note-control").forEach((row) => {
+    const input = row.querySelector("input"),
+      save = row.querySelector(".note-save"),
+      id = row.dataset.noteBlock;
+    input.addEventListener("input", () => {
+      const all = drafts(),
+        prior = all[id] || {};
+      all[id] = {
+        text: input.value,
+        clientId:
+          prior.text === input.value ? prior.clientId : crypto.randomUUID(),
+      };
+      saveLocal(DRAFT_KEY, all);
+      row.querySelector(".note-result").textContent =
+        "Draft kept on this device";
     });
-    list.appendChild(label);
+    const submit = async () => {
+      const text = input.value.trim();
+      if (!text) return;
+      save.disabled = true;
+      const all = drafts();
+      const draft =
+        all[id]?.text === input.value
+          ? all[id]
+          : { text: input.value, clientId: crypto.randomUUID() };
+      all[id] = draft;
+      saveLocal(DRAFT_KEY, all);
+      const session = sessionsDoc.sessions.find(
+          (s) => s.id === row.dataset.noteSession,
+        ),
+        block = session?.blocks.find((b) => b.id === id);
+      try {
+        if (!block) throw new Error("This block changed. Your draft is kept.");
+        const start = state().startDate || "2026-09-22";
+        const day =
+          Math.floor((dateObj(session.date) - dateObj(start)) / 86400000) + 1;
+        const result = await api("/api/observations", {
+          clientId: draft.clientId,
+          day,
+          date: session.date,
+          sessionId: session.id,
+          blockId: block.id,
+          block: block.title,
+          pieceId: block.pieceId || null,
+          movementId: block.movementId || null,
+          movement: block.movement || null,
+          text,
+        });
+        const file =
+          docs[FILES.obs] || (docs[FILES.obs] = { obj: { obs: [] } });
+        const list = file.obj.obs || (file.obj.obs = []);
+        if (
+          result.observation &&
+          !list.some((o) => o.id === result.observation.id)
+        )
+          list.push(result.observation);
+        const updated = drafts();
+        const unchanged =
+          updated[id]?.clientId === draft.clientId &&
+          input.value === draft.text;
+        if (unchanged) {
+          delete updated[id];
+          saveLocal(DRAFT_KEY, updated);
+          input.value = "";
+        }
+        row.querySelector(".note-result").textContent = unchanged
+          ? "Saved · ready for your coach"
+          : "Previous note saved · your new draft is kept";
+        saveCache();
+      } catch (e) {
+        row.querySelector(".note-result").textContent =
+          `${e.message} Draft kept for retry.`;
+      } finally {
+        save.disabled = false;
+      }
+    };
+    save.addEventListener("click", submit);
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") submit();
+    });
   });
-  root.appendChild(list);
-  paintFocusProgress($("focusOverlay"), progress);
 }
-
-function openFocus(startId){
-  const bs = state().today.blocks || [];
-  if (!bs.length) return;
-  let idx = bs.findIndex(x => !x.done);
-  if (startId){ const i = bs.findIndex(x => x.id === startId); if (i >= 0) idx = i; }
-  if (idx < 0) idx = bs.length - 1;
-  focusIdx = idx;
-  document.body.classList.add("focusing");
-  $("focusOverlay").hidden = false;
+function openFocus(sessionId, blockId) {
+  focusActionError = "";
+  focusRef = { sessionId, blockId };
   renderFocus();
+  if (!$("focusOverlay").open) $("focusOverlay").showModal();
+  document.body.classList.add("focusing");
 }
-
-function closeFocus(){
-  focusIdx = null;
+function closeFocus() {
+  $("focusOverlay").close();
   document.body.classList.remove("focusing");
-  $("focusOverlay").hidden = true;
-  renderToday();
+  focusRef = null;
 }
-
-function focusAdvance(){
-  const bs = state().today.blocks || [];
-  for (let i = focusIdx + 1; i < bs.length; i++){
-    if (!bs[i].done){ focusIdx = i; renderFocus(); return; }
+function renderFocus() {
+  const { session: s, block: b } = focusItems();
+  if (!s || !b) {
+    if ($("focusOverlay").open) closeFocus();
+    return;
   }
-  for (let i = 0; i < bs.length; i++){
-    if (!bs[i].done){ focusIdx = i; renderFocus(); return; }
-  }
-  closeFocus();
+  const active = b.status === "active",
+    paused = b.status === "paused",
+    terminal = b.done || ["skipped", "missed"].includes(b.status),
+    valid = active ? canStart(s) : canStart(s, b);
+  const index = s.blocks.indexOf(b);
+  $("focusContent").innerHTML =
+    `<div class="focus-top"><button class="text-button" data-focus-close>← Session</button><span>${index + 1} of ${s.blocks.length} blocks</span><button class="icon-button" data-focus-close aria-label="Close focus">×</button></div><div class="focus-progress"><i style="width:${(100 * (index + 1)) / s.blocks.length}%"></i></div><div class="eyebrow">${esc(kindNames[b.kind] || "PRACTICE")} · ${b.mins} MIN PLANNED</div><h1>${esc(b.title)}</h1><p class="muted">${esc(s.room)} · room booking ends ${clockLabel(s.end)}</p>${!valid ? `<div class="inline-notice warning">${esc(noStartReason(s))} Your work and notes remain available.</div>` : ""}${instructions(b)}<div class="timer-area"><output id="focusTimer" aria-label="Time remaining">${b.mins}:00</output><span id="timerStatus" class="muted">${terminal ? statusNames[b.status] : active ? "Timer running" : paused ? "Paused" : "Ready when you are"}</span></div><div class="focus-actions">${!terminal ? button(active ? "Pause" : paused ? "Resume" : "Start block", `data-action="${active ? "pause" : "start"}" ${(!valid && !active) || busyAction ? "disabled" : ""}`, !active) : ""}${!terminal ? button("Mark complete & next →", `data-action="complete" ${busyAction || !["active", "paused"].includes(b.status) ? "disabled" : ""}`, true) : button("Next block →", "data-focus-next", true)}${!terminal ? button("Skip this block", 'data-action="skip"') : ""}</div>${["playing", "study"].includes(b.kind) ? noteHTML(s, b) : ""}<p class="focus-context">${help(b.why || "The duration fits this room booking.", "Why this task?")} The timer never marks a block complete for you.</p><div id="focusResult" class="inline-status" role="status">${esc(focusActionError)}</div>`;
+  wireNotes($("focusContent"));
+  tickTimer();
 }
-
-function renderFocus(){
-  if (focusIdx === null) return;
-  const bs = state().today.blocks || [];
-  const b = bs[focusIdx];
-  if (!b) return closeFocus();
-  const isBreak = isBreakBlock(b);
-  const isStudy = String(b.id).startsWith("score-study");
-  const steps = focusSteps(b);
-  const movementContext = blockMovementContext(b);
-  const undone = bs.filter(x => !x.done).length;
-  const nxt = bs.slice(focusIdx + 1).find(x => !x.done);
-  const ov = $("focusOverlay");
-  ov.innerHTML = `<div class="focus-inner">
-    <div class="focus-topbar">
-      <div class="f-kicker">Day ${Math.max(dayInfo().day,1)} · ${undone} block${undone===1?"":"s"} left · ${isStudy ? "off bench · " : ""}${b.mins} min</div>
-      <div class="focus-model-control">
-        <button class="model-trigger focus-model-trigger" id="focusModelTrigger" type="button" aria-haspopup="dialog" aria-expanded="false">
-          <span class="model-provider-mark anthropic" id="focusModelProviderMark">CL</span>
-          <span class="model-trigger-name" id="focusModelTriggerName">Claude Opus 5</span>
-          <span class="model-trigger-effort" id="focusModelTriggerEffort">Medium</span>
-          <span class="model-chevron" aria-hidden="true">⌄</span>
-        </button>
-        <div class="model-menu focus-model-menu" id="focusModelMenu" role="dialog" aria-label="Choose coach model" hidden>
-          <div class="model-menu-head">
-            <div><strong>Coach model</strong><span>Used for your next coach message</span></div>
-            <button id="focusModelMenuClose" type="button" aria-label="Close model picker">×</button>
-          </div>
-          <div class="model-menu-list" id="focusModelMenuList"></div>
-          <div class="reasoning-picker">
-            <div class="reasoning-copy"><strong>Reasoning</strong><span id="focusReasoningHint"></span></div>
-            <div class="reasoning-options" id="focusReasoningOptions" role="group" aria-label="Reasoning level"></div>
-          </div>
-        </div>
-      </div>
-    </div>
-    ${steps.length ? `<div class="focus-progress">
-      <div class="focus-progress-copy"><span>Block progress</span><strong class="focus-progress-count">0 / ${steps.length}</strong></div>
-      <div class="focus-progress-track" role="progressbar" aria-label="Block progress" aria-valuemin="0" aria-valuemax="${steps.length}" aria-valuenow="0"><i></i></div>
-    </div>` : ""}
-    ${movementContext ? '<div class="movement-label"></div>' : ""}
-    <div class="f-title"></div>
-    <div class="f-detail"></div>
-    ${b.why ? '<div class="f-why"></div>' : ""}
-    <div class="f-timer-row"><button class="timerbtn" data-block="${b.id}"></button></div>
-    ${isBreak ? "" : NOTEBAR_HTML}
-    <div class="f-actions">
-      <button class="btn primary" id="fDone">${isBreak ? "Break over → next" : "Done → next"}</button>
-      <button class="notebtn" id="fSkip">Skip for now</button>
-      <button class="notebtn" id="fExit">Exit focus</button>
-    </div>
-    ${nxt ? `<div class="f-next">Up next: ${nxt.title} · ${nxt.mins} min</div>` : '<div class="f-next">Last one of the day.</div>'}
-  </div>`;
-  if (movementContext) ov.querySelector(".movement-label").textContent = movementContext;
-  ov.querySelector(".f-title").textContent = b.title;
-  if (steps.length) renderFocusChecklist(ov.querySelector(".f-detail"), b, steps);
-  else renderBlockInstructions(ov.querySelector(".f-detail"), b);
-  wireFocusModelPicker();
-  if (b.why) ov.querySelector(".f-why").textContent = b.why;
-  wireTimerButton(ov.querySelector(".timerbtn"), b);
-  wireNotebar(ov, b);
-  ov.querySelector("#fDone").addEventListener("click", async () => {
-    await toggleBlockTo(b.id, true); focusAdvance();
-  });
-  ov.querySelector("#fSkip").addEventListener("click", focusAdvance);
-  ov.querySelector("#fExit").addEventListener("click", closeFocus);
+function restoreTimer() {
+  // Active/paused timing lives on the server, so another device can resume it.
+  localStorage.removeItem(TIMER_KEY);
 }
-
-/* attention flags: word + color, never color alone */
-const FLAGS = { urgent: "✕ needs work", focus: "◆ focus", secure: "✓ secure" };
-
-/* ── block timer ─────────────────────────────────────────── */
-const TIMER_STORAGE_KEY = "practice-room-timer";
-let timer = null; // {blockId, practiceDate, endsAt, remainMs, paused, iv, mins}
-
-function wireTimerButton(btn, b){
-  if (b.done){ btn.remove(); return; }
-  paintTimerBtn(btn, b);
-  btn.addEventListener("click", () => {
-    if (timer && timer.blockId === b.id){
-      timer.paused ? resumeTimer() : pauseTimer();
+function tickTimer() {
+  if (!focusRef) return;
+  const { block: b } = focusItems();
+  if (!b) return;
+  let remaining = Math.max(
+    0,
+    Number(b.mins) * 60 - Number(b.elapsedSeconds || 0),
+  );
+  if (b.status === "active")
+    remaining = Math.max(0, (new Date(b.end) - Date.now()) / 1000);
+  const seconds = Math.ceil(remaining);
+  if ($("focusTimer"))
+    $("focusTimer").textContent =
+      `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+  if ($("timerStatus"))
+    $("timerStatus").textContent = b.done
+      ? "Completed"
+      : b.status === "skipped"
+        ? "Skipped"
+        : b.status === "active" && !seconds
+          ? "Time reached · finish when ready"
+          : b.status === "paused"
+            ? "Paused"
+            : b.status === "active"
+              ? "In progress"
+              : "Ready when you are";
+}
+async function sessionAction(action) {
+  if (busyAction) return;
+  const { session: s, block: b } = focusItems();
+  if (!s || !b) return;
+  busyAction = true;
+  focusActionError = "";
+  try {
+    const result = await api("/api/sessions/action", {
+      sessionId: s.id,
+      blockId: b.id,
+      action,
+    });
+    if (Array.isArray(result.sessions)) {
+      sessionsDoc = result;
+      saveCache();
     } else {
-      startTimer(b);
+      await loadAll();
     }
+    if (action === "complete" || action === "skip") nextFocus();
+    else renderFocus();
+    renderWeek();
     renderToday();
-  });
+  } catch (e) {
+    focusActionError = e.message;
+    if ($("focusResult")) $("focusResult").textContent = e.message;
+    else banner(e.message, true);
+  } finally {
+    busyAction = false;
+    if (focusRef) renderFocus();
+  }
 }
-
-function paintTimerBtn(btn, b){
-  if (timer && timer.blockId === b.id){
-    const mmss = fmtMs(timer.paused ? timer.remainMs : timer.endsAt - Date.now());
-    btn.textContent = timer.paused ? `▶ resume · ${mmss}` : `⏸ ${mmss}`;
-    btn.classList.add("running");
+function nextFocus() {
+  const { session: s, block: b } = focusItems();
+  if (!s) return;
+  const next = s.blocks
+    .slice(s.blocks.indexOf(b) + 1)
+    .find((b) => !b.done && !["skipped", "missed"].includes(b.status));
+  if (next) {
+    focusRef.blockId = next.id;
+    renderFocus();
   } else {
-    btn.textContent = `▶ start · ${b.mins} min`;
-    btn.classList.remove("running");
+    $("focusContent").innerHTML =
+      `<div class="session-finished"><div class="eyebrow">SESSION RECORDED</div><h1>Leave a useful next step.</h1><p>Your completed blocks and notes are saved. Unfinished work stays unfinished.</p>${button("Debrief with coach →", "data-session-debrief", true)}${button("Back to the week", "data-focus-close")}<p class="muted small">Finishing practice does not cancel your room booking.</p></div>`;
+    focusRef = null;
   }
 }
-
-function startTimer(b){
-  stopTimer();
-  timer = {
-    blockId: b.id,
-    practiceDate: state().today.date,
-    mins: b.mins,
-    endsAt: Date.now() + b.mins*60000,
-    remainMs: b.mins*60000,
-    paused: false,
-    iv: null
-  };
-  saveTimer();
-  timer.iv = setInterval(tickTimer, 1000);
+function deadlines() {
+  return Array.isArray(academic.deadlines)
+    ? academic.deadlines
+    : Array.isArray(academic.academicYear?.deadlines)
+      ? academic.academicYear.deadlines
+      : [];
 }
-function pauseTimer(){
-  if (!timer) return;
-  timer.remainMs = Math.max(0, timer.endsAt - Date.now());
-  timer.paused = true;
-  saveTimer();
+function deadlineName(d) {
+  return d.title || d.label || d.name || d.id || "Performance";
 }
-function resumeTimer(){
-  if (!timer) return;
-  timer.endsAt = Date.now() + timer.remainMs;
-  timer.paused = false;
-  saveTimer();
+function deadlineMonth(d) {
+  return d.month || d.targetMonth || d.date?.slice(0, 7) || "";
 }
-function stopTimer(){
-  if (timer) clearInterval(timer.iv);
-  timer = null;
-  try { localStorage.removeItem(TIMER_STORAGE_KEY); } catch {}
-  document.title = "Practice Room";
+function monthLabel(month) {
+  return /^\d{4}-\d{2}$/.test(month)
+    ? dateLabel(month + "-01", { month: "long", year: "numeric" })
+    : "Date window to confirm";
 }
-
-function saveTimer(){
-  if (!timer) return;
-  try {
-    localStorage.setItem(TIMER_STORAGE_KEY, JSON.stringify({
-      blockId: timer.blockId,
-      practiceDate: timer.practiceDate,
-      endsAt: timer.endsAt,
-      remainMs: timer.remainMs,
-      paused: timer.paused,
-      mins: timer.mins
-    }));
-  } catch {}
+function pieceDeadlineLabel(piece) {
+  const matched = deadlines().filter((d) =>
+    (piece.deadlineIds || []).includes(d.id),
+  );
+  if (matched.length)
+    return matched.map((d) => monthLabel(deadlineMonth(d))).join(" + ");
+  return piece.id === "beethoven-op109"
+    ? "FEBRUARY + MAY"
+    : monthLabel(piece.planning?.deadlineMonth || "");
 }
-
-function restoreTimer(){
-  if (timer) return;
-  let saved = null;
-  try { saved = JSON.parse(localStorage.getItem(TIMER_STORAGE_KEY)); } catch {}
-  const blocks = state().today.blocks || [];
-  const block = saved && blocks.find(b => b.id === saved.blockId);
-  const valid = block && !block.done &&
-    saved.practiceDate === state().today.date &&
-    Number.isFinite(saved.endsAt) && Number.isFinite(saved.remainMs) &&
-    typeof saved.paused === "boolean";
-  if (!valid){
-    try { localStorage.removeItem(TIMER_STORAGE_KEY); } catch {}
-    return;
+function renderProgramme() {
+  const ds = deadlines();
+  $("deadlineOverview").innerHTML = (
+    ds.length
+      ? ds
+      : [
+          { title: "February assessments", month: "2027-02" },
+          { title: "Final recital", month: "2027-05" },
+        ]
+  )
+    .map(
+      (d) =>
+        `<div><span class="eyebrow">${esc(deadlineName(d))}</span><strong>${d.date ? esc(dateLabel(d.date)) : esc(monthLabel(deadlineMonth(d)))}</strong><small>${d.date ? "Confirmed date" : "Exact date to confirm"}</small></div>`,
+    )
+    .join("");
+  const list = (state().pieces || []).filter(
+    (p) =>
+      pieceFilter === "all" ||
+      p.planning?.deadlineMonth === pieceFilter ||
+      (p.movements || []).some(
+        (m) => m.planning?.deadlineMonth === pieceFilter,
+      ) ||
+      p.id === "beethoven-op109",
+  );
+  $("pieces").innerHTML =
+    list
+      .map((p) => {
+        const notes = (p.statusPoints || [])
+          .map(
+            (point) =>
+              `<li><strong>${esc(point.lead)}</strong> ${esc(point.text)}</li>`,
+          )
+          .join("");
+        const spots = (docs[FILES.spots]?.obj?.spots || []).filter(
+          (sp) => sp.piece === p.id && sp.status !== "fixed",
+        );
+        const evidence = p.lastCold
+          ? `${p.lastCold.result === "pass" ? "Held up" : p.lastCold.result === "fail" ? "Needs another approach" : p.lastCold.result} · ${p.lastCold.date}`
+          : "Not assessed yet";
+        return `<article class="piece"><div class="piece-heading"><div><div class="eyebrow">${esc(pieceDeadlineLabel(p))}</div><h2>${esc(p.title)}</h2></div><span class="status">${p.id === "lecture-recital" ? "Music undecided" : "Learning in progress"}</span></div>${notes ? `<ul class="instruction-list piece-points">${notes}</ul>` : `<p>${esc(p.note || p.planning?.focus || "Choose a first section and record a baseline.")}</p>`}<details><summary>Learning route & evidence</summary><div class="piece-detail"><p><strong>Last recall check:</strong> ${esc(evidence)} ${help("Record what happened, when, and with which score/tempo conditions. An unassessed piece has missing evidence, not zero ability.")}</p>${p.movements?.map((m) => `<section><h3>${esc(m.title)}</h3><p>${esc(m.planning?.focus || "Map the sections; work on the next unfinished passage.")}</p>${m.planning?.passTest ? `<p class="muted"><strong>Next check:</strong> ${esc(m.planning.passTest)}</p>` : ""}</section>`).join("") || ""}${spots.length ? `<h3>Open observations</h3>${spots.map((sp) => `<p>${esc(sp.movement || "")} ${esc(sp.bars ? `Passage ${sp.bars}: ` : "")}${esc(sp.issue)} <small class="muted">${esc(sp.logged || "")}</small></p>`).join("")}` : ""}<button class="text-button" data-piece-coach="${esc(p.title)}">Discuss the next step with coach →</button></div></details></article>`;
+      })
+      .join("") ||
+    '<div class="empty-panel"><h2>No works in this group yet</h2><p>Your saved repertoire will appear here after the academic-year setup is complete.</p></div>';
+}
+function renderYear() {
+  const phases =
+    docs[FILES.weekly]?.obj?.phases ||
+    academic.chronology ||
+    academic.phases ||
+    [];
+  $("yearRoute").innerHTML = phases.length
+    ? phases
+        .map(
+          (p) =>
+            `<section class="route-phase"><div class="eyebrow">${esc(p.window || p.period || p.month || p.label || "")}</div><h3>${esc(p.title || "Next stage")}</h3><p>${esc(p.headline || p.description || "")}</p>${Array.isArray(p.goals) ? `<ul>${p.goals.map((t) => `<li>${esc(t)}</li>`).join("")}</ul>` : ""}${p.gate?.criteria ? `<div class="route-gate"><strong>${esc(p.gate.label || "Next checkpoint")}</strong><ul>${p.gate.criteria.map((c) => `<li>${esc(c)}</li>`).join("")}</ul></div>` : ""}</section>`,
+        )
+        .join("")
+    : '<p class="muted">Your year chronology is loading. February and May remain planning windows until exact dates are confirmed.</p>';
+}
+function renderJournal() {
+  const q = ($("journalSearch").value || "").toLowerCase();
+  const entries = (journal().entries || [])
+    .filter((e) => !state().startDate || e.date >= state().startDate)
+    .slice()
+    .reverse()
+    .filter((e) => `${e.title} ${e.body} ${e.date}`.toLowerCase().includes(q));
+  $("entries").innerHTML = entries.length
+    ? entries
+        .map(
+          (e) =>
+            `<article class="entry"><div class="eyebrow">${esc(e.date || "")}</div><h2>${esc(e.title || "Practice review")}</h2><div class="e-body">${mdLite(e.body || "")}</div></article>`,
+        )
+        .join("")
+    : `<div class="empty-panel"><h2>${q ? "No matching entries" : "Your first useful review starts here"}</h2><p>${q ? "Try a piece name or another date." : "After a session, tell the coach what held up and what needs another approach."}</p>${button("Debrief with coach →", "data-journal-debrief", true)}</div>`;
+}
+function renderCoach(forceBottom = false) {
+  const t = $("thread"),
+    nearBottom = t.scrollHeight - t.scrollTop - t.clientHeight < 90,
+    scroll = t.scrollTop,
+    activityScroll = new Map(
+      [...t.querySelectorAll(".coach-activity")].map((el, i) => [
+        i,
+        el.scrollTop,
+      ]),
+    );
+  t.innerHTML = "";
+  const messages = chat().messages || [];
+  if (!messages.length) {
+    t.innerHTML =
+      '<div class="empty-panel"><h2>Turn observations into the next session.</h2><p>Tell your coach what held up, where it changed, and what you want to work on. Room-based scheduling keeps working while the coach thinks.</p></div>';
   }
-  timer = {
-    blockId: saved.blockId,
-    practiceDate: saved.practiceDate,
-    mins: Number.isFinite(saved.mins) ? saved.mins : block.mins,
-    endsAt: saved.endsAt,
-    remainMs: Math.max(0, saved.remainMs),
-    paused: saved.paused,
-    iv: setInterval(tickTimer, 1000)
-  };
-}
-
-function tickTimer(){
-  if (!timer || timer.paused) return;
-  const left = timer.endsAt - Date.now();
-  if (left <= 0){
-    const finished = timer.blockId;
-    chime();
-    stopTimer();
-    toggleBlockTo(finished, true).then(() => { if (focusIdx !== null) focusAdvance(); });
-    return;
-  }
-  document.title = `${fmtMs(left)} · Practice Room`;
-  document.querySelectorAll(`.timerbtn[data-block="${timer.blockId}"]`).forEach(btn => {
-    const st = state();
-    const bb = (st.today.blocks || []).find(x => x.id === timer.blockId);
-    if (bb) paintTimerBtn(btn, bb);
+  messages.forEach((m) => t.appendChild(bubble(m)));
+  t.querySelectorAll(".coach-activity").forEach((el, i) => {
+    el.scrollTop = activityScroll.get(i) || 0;
   });
-  renderPracticeTime();
+  if (forceBottom || nearBottom) t.scrollTop = t.scrollHeight;
+  else t.scrollTop = scroll;
 }
-
-function fmtMs(ms){
-  const t = Math.max(0, Math.round(ms/1000));
-  return `${Math.floor(t/60)}:${String(t%60).padStart(2,"0")}`;
+function openSettings() {
+  const target = sessionsDoc.dailyTargetMinutes ||
+    academic.dailyTargetMinutes || { min: 240, max: 360 };
+  $("targetMin").value = target.min / 60;
+  $("targetMax").value = target.max / 60;
+  $("settingsSync").textContent = syncText();
+  $("deadlineFields").innerHTML =
+    deadlines()
+      .map(
+        (d) =>
+          `<label class="field">${esc(deadlineName(d))}<input type="date" data-deadline="${esc(d.id)}" value="${esc(d.date || "")}"></label>`,
+      )
+      .join("") ||
+    '<p class="muted">Deadline settings will appear when your academic year is ready.</p>';
+  $("settingsResult").textContent = "";
+  $("settingsDialog").showModal();
 }
-
-function chime(){
+async function saveSettings(e) {
+  e.preventDefault();
+  const min = Number($("targetMin").value) * 60,
+    max = Number($("targetMax").value) * 60;
+  if (min > max) {
+    $("settingsResult").textContent =
+      "The maximum must be at least the minimum.";
+    return;
+  }
+  $("saveSettings").disabled = true;
   try {
-    const ctx = new (window.AudioContext || window.webkitAudioContext)();
-    [0, 0.35, 0.7].forEach((delay, i) => {
-      const o = ctx.createOscillator(), g = ctx.createGain();
-      o.connect(g); g.connect(ctx.destination);
-      o.frequency.value = [660, 880, 990][i];
-      g.gain.setValueAtTime(0.0001, ctx.currentTime + delay);
-      g.gain.exponentialRampToValueAtTime(0.2, ctx.currentTime + delay + 0.03);
-      g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + delay + 0.5);
-      o.start(ctx.currentTime + delay); o.stop(ctx.currentTime + delay + 0.55);
+    await api("/api/preferences", {
+      dailyTargetMinutes: { min, max },
+      deadlines: [...document.querySelectorAll("[data-deadline]")].map(
+        (el) => ({ id: el.dataset.deadline, date: el.value || null }),
+      ),
     });
-  } catch {}
+    await refreshQuiet();
+    $("settingsResult").textContent =
+      "Saved. Future sessions will adapt to these priorities.";
+  } catch (error) {
+    $("settingsResult").textContent = error.message;
+  } finally {
+    $("saveSettings").disabled = false;
+  }
 }
-
-async function toggleBlockTo(blockId, value){
-  try {
-    await ghPut(FILES.state, s => {
-      const b = s.today.blocks.find(x => x.id === blockId);
-      if (b) b.done = value;
-      return s;
-    }, "block finished (timer)");
-    renderToday();
-  } catch (e){ banner(e.message, true); }
+function showHelp(anchor, pinned = false) {
+  helpAnchor = anchor;
+  helpPinned = pinned;
+  const box = $("helpPopover");
+  (anchor.closest("dialog[open]") || document.body).appendChild(box);
+  $("helpText").textContent = anchor.dataset.help;
+  box.hidden = false;
+  anchor.setAttribute("aria-describedby", "helpPopover");
+  const rect = anchor.getBoundingClientRect(),
+    width = Math.min(340, window.innerWidth - 24);
+  box.style.width = width + "px";
+  box.style.left =
+    Math.max(12, Math.min(rect.left, window.innerWidth - width - 12)) + "px";
+  const height = box.getBoundingClientRect().height;
+  box.style.top =
+    (rect.bottom + height + 12 < window.innerHeight
+      ? rect.bottom + 8
+      : Math.max(12, rect.top - height - 8)) + "px";
 }
-
-function todayISO(){ const d = new Date(); d.setMinutes(d.getMinutes()-d.getTimezoneOffset()); return d.toISOString().slice(0,10); }
-
-async function cycleCold(pieceId){
-  try {
-    await ghPut(FILES.state, s => {
-      const p = s.pieces.find(x => x.id === pieceId);
-      const today = todayISO();
-      const cur = (p.lastCold && p.lastCold.date === today) ? p.lastCold.result : null;
-      if (cur === null) p.lastCold = { result:"pass", date: today };
-      else if (cur === "pass") p.lastCold = { result:"fail", date: today };
-      else p.lastCold = null;
-      return s;
-    }, "cold test result");
-    renderToday(); renderProgramme();
-  } catch (e){ banner(e.message, true); }
+function hideHelp() {
+  if (helpAnchor) helpAnchor.removeAttribute("aria-describedby");
+  $("helpPopover").hidden = true;
+  document.body.appendChild($("helpPopover"));
+  helpAnchor = null;
+  helpPinned = false;
 }
-
-async function toggleBlock(blockId){
-  try {
-    await ghPut(FILES.state, s => {
-      const b = s.today.blocks.find(x => x.id === blockId);
-      if (b) b.done = !b.done;
-      return s;
-    }, "block toggled");
-    renderToday();
-  } catch (e){ banner(e.message, true); }
+async function openArchive() {
+  const entries = (journal().entries || [])
+    .filter((e) => state().startDate && e.date < state().startDate)
+    .slice()
+    .reverse();
+  $("archiveContent").innerHTML =
+    `<p class="muted">Journal entries before the current academic year. Their original observations are preserved.</p>${entries.map((e) => `<article class="entry"><div class="eyebrow">${esc(e.date)}</div><h3>${esc(e.title || "Practice review")}</h3><div class="e-body">${mdLite(e.body || "")}</div></article>`).join("") || "<p>No earlier journal entries are present in this snapshot.</p>"}`;
+  $("archiveDialog").showModal();
 }
-
-function renderProgramme(){
-  const wrap = $("pieces"); wrap.innerHTML = "";
-  state().pieces.forEach(p => {
-    const div = document.createElement("div");
-    const flag = FLAGS[p.attention] ? p.attention : null;
-    const hasSecurity = Number.isFinite(Number(p.security)) && p.security !== null;
-    const hasTempo = Number.isFinite(Number(p.tempoPct)) && p.tempoPct !== null;
-    const security = hasSecurity ? Number(p.security) : null;
-    div.className = "piece" + (flag ? " f-" + flag : "");
-    const lastCold = p.lastCold
-      ? `${p.lastCold.result === "pass" ? "✓ passed" : "✕ broke down"} · ${p.lastCold.date}`
-      : "not yet tested";
-    const level = security === null ? "unmeasured"
-                : security >= 85 ? "stage-ready" : security >= 65 ? "nearly there"
-                : security >= 40 ? "building" : "fragile";
-    div.innerHTML = `
-      <div class="p-head"><h2></h2><span class="head-right">${flag ? `<span class="ftag f-${flag}">${FLAGS[flag]}</span>` : ""}<span class="p-tag">${level}</span></span></div>
-      <div class="meter"><i style="width:${security === null ? 0 : Math.max(3,Math.min(100,security))}%"></i></div>
-      <div class="p-row">
-        <span>security <b>${security === null ? "—" : security}</b>${security === null ? "" : "/100"}</span>
-        <span>reliable tempo <b>${hasTempo ? `${p.tempoPct}%` : "—"}</b>${hasTempo ? " of target" : ""}</span>
-        <span>cold test: <b>${lastCold}</b></span>
-      </div>
-      <div class="p-note"></div><div class="spots"></div>`;
-    div.querySelector("h2").textContent = p.title;
-    renderProgrammeStatus(div.querySelector(".p-note"), p);
-    const spotBox = div.querySelector(".spots");
-    const all = ((docs[FILES.spots] || {obj:{spots:[]}}).obj.spots || []).filter(sp => sp.piece === p.id);
-    const open = all.filter(sp => sp.status !== "fixed");
-    const fixed = all.length - open.length;
-    open.forEach(sp => {
-      const row = document.createElement("div");
-      row.className = "spot" + (sp.status === "watching" ? " watching" : "");
-      row.innerHTML = `<span class="s-bars"></span><span class="s-issue"></span><span class="s-meta"></span>`;
-      row.querySelector(".s-bars").textContent = (sp.movement ? `${sp.movement} · ` : "") + "b." + sp.bars;
-      row.querySelector(".s-issue").textContent = sp.issue;
-      row.querySelector(".s-meta").textContent = (sp.status === "watching" ? "◆ watching · " : "✕ open · ") + sp.logged;
-      spotBox.appendChild(row);
-    });
-    if (fixed > 0){
-      const row = document.createElement("div");
-      row.className = "spot fixedcount";
-      row.textContent = `✓ ${fixed} fixed`;
-      spotBox.appendChild(row);
+function wireChrome() {
+  document.addEventListener(
+    "toggle",
+    (event) => {
+      const detail = event.target;
+      if (!detail.matches?.(".schedule-block[data-block-id]")) return;
+      if (detail.open) openBlockIds.add(detail.dataset.blockId);
+      else openBlockIds.delete(detail.dataset.blockId);
+    },
+    true,
+  );
+  document
+    .querySelectorAll(".tab")
+    .forEach((b) =>
+      b.addEventListener("click", () => switchView(b.dataset.view)),
+    );
+  document.querySelector(".brand")?.addEventListener?.("click", (e) => {
+    e.preventDefault();
+    switchView("week");
+  });
+  $("refreshBtn").addEventListener("click", refreshBookings);
+  $("settingsBtn").addEventListener("click", openSettings);
+  $("settingsForm").addEventListener("submit", saveSettings);
+  $("journalSearch").addEventListener("input", renderJournal);
+  $("archiveBtn").addEventListener("click", openArchive);
+  $("send").addEventListener("click", sendMessage);
+  wireModelPicker();
+  $("memBtn").addEventListener("click", toggleMemory);
+  $("input").value =
+    localStorage.getItem("practice-room-chat-draft") ||
+    readLocal("practice-room-chat-outbox", {})?.text ||
+    "";
+  $("input").addEventListener("input", () =>
+    localStorage.setItem("practice-room-chat-draft", $("input").value),
+  );
+  $("input").addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) sendMessage();
+  });
+  document.querySelectorAll(".chip.q").forEach((c) =>
+    c.addEventListener("click", () => {
+      $("input").value = c.dataset.q;
+      $("input").focus();
+    }),
+  );
+  $("previousWeek").addEventListener("click", () => {
+    weekStart = dayOffset(weekStart, -7);
+    selectedDate = weekStart;
+    renderWeek();
+  });
+  $("nextWeek").addEventListener("click", () => {
+    weekStart = dayOffset(weekStart, 7);
+    selectedDate = weekStart;
+    renderWeek();
+  });
+  $("thisWeek").addEventListener("click", () => {
+    selectedDate = sessionsDoc.today || ukDate();
+    weekStart = monday(selectedDate);
+    renderWeek();
+  });
+  $("closeHelp").addEventListener("click", hideHelp);
+  $("focusOverlay").addEventListener("cancel", () => {
+    focusRef = null;
+    document.body.classList.remove("focusing");
+  });
+  $("adjustForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const btn =
+      e.target.querySelector('button[type="submit"]') ||
+      e.target.querySelector(".primary");
+    btn.disabled = true;
+    try {
+      await api("/api/sessions/adjust", {
+        sessionId: adjustSessionId,
+        availableMinutes: Number($("availableMinutes").value),
+      });
+      await refreshQuiet();
+      $("adjustDialog").close();
+      banner("Session adapted. Your room reservation is unchanged.");
+    } catch (error) {
+      $("adjustResult").textContent = error.message;
+    } finally {
+      btn.disabled = false;
     }
-    wrap.appendChild(div);
+  });
+  document.addEventListener("click", (e) => {
+    const t = e.target.closest("button,a");
+    if (!t) return;
+    if (t.dataset.switch) switchView(t.dataset.switch);
+    if (t.dataset.date) {
+      selectedDate = t.dataset.date;
+      renderWeek();
+    }
+    if (t.dataset.session) {
+      selectedSessionId = t.dataset.session;
+      renderWeek();
+      if (window.innerWidth < 760)
+        $("sessionDetail").scrollIntoView({
+          behavior: "smooth",
+          block: "start",
+        });
+    }
+    if (t.dataset.focusSession)
+      openFocus(t.dataset.focusSession, t.dataset.focusBlock);
+    if (t.hasAttribute("data-focus-close")) closeFocus();
+    if (t.dataset.action) sessionAction(t.dataset.action);
+    if (t.hasAttribute("data-focus-next")) nextFocus();
+    if (t.dataset.adjust) {
+      adjustSessionId = t.dataset.adjust;
+      const s = sessionsDoc.sessions.find((s) => s.id === adjustSessionId);
+      $("availableMinutes").max = s.bookedMinutes;
+      $("availableMinutes").value =
+        s.sessionLimitMinutes ??
+        academic.sessionLimits?.[s.id] ??
+        s.bookedMinutes;
+      $("adjustResult").textContent = "";
+      $("adjustDialog").showModal();
+    }
+    if (t.dataset.close) $(t.dataset.close).close();
+    if (t.dataset.filter) {
+      pieceFilter = t.dataset.filter;
+      document
+        .querySelectorAll("[data-filter]")
+        .forEach((b) => b.classList.toggle("active", b === t));
+      renderProgramme();
+    }
+    if (t.dataset.pieceCoach) {
+      switchView("coach");
+      $("input").value =
+        `Help me plan the next step for ${t.dataset.pieceCoach}. `;
+      $("input").focus();
+    }
+    if (
+      t.hasAttribute("data-journal-debrief") ||
+      t.hasAttribute("data-session-debrief")
+    ) {
+      if ($("focusOverlay").open) closeFocus();
+      switchView("coach");
+      $("input").value = "Debrief: ";
+      $("input").focus();
+    }
+    if (t.dataset.help) {
+      showHelp(t, true);
+      e.stopPropagation();
+    } else if (!e.target.closest(".help-popover")) hideHelp();
+  });
+  document.addEventListener("pointerover", (e) => {
+    const t = e.target.closest("[data-help]");
+    if (t && !helpPinned) showHelp(t);
+  });
+  document.addEventListener("pointerout", (e) => {
+    if (
+      e.target.closest("[data-help]") &&
+      !helpPinned &&
+      !e.relatedTarget?.closest(".help-popover")
+    )
+      hideHelp();
+  });
+  document.addEventListener("focusin", (e) => {
+    if (e.target.matches("[data-help]")) showHelp(e.target);
+  });
+  document.addEventListener("focusout", (e) => {
+    if (e.target.matches("[data-help]") && !helpPinned) hideHelp();
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") hideHelp();
+  });
+  window.addEventListener("resize", () => {
+    if (helpAnchor) showHelp(helpAnchor, helpPinned);
+  });
+  window.addEventListener("focus", () => refreshQuiet());
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") {
+      tickTimer();
+      refreshQuiet();
+    }
   });
 }
+window.addEventListener("DOMContentLoaded", async () => {
+  if (location.hostname.endsWith(".github.io")) {
+    location.replace(PRIVATE_ORIGIN + "/");
+    return;
+  }
+  wireChrome();
+  await start();
+  switchView("week");
+  setInterval(() => {
+    if (document.visibilityState === "visible") refreshQuiet();
+  }, 25000);
+  setInterval(tickTimer, 500);
+});
 
-/* ── coach / chat ────────────────────────────────────────── */
-function renderCoach(){
-  const t = $("thread"); t.innerHTML = "";
-  const msgs = chat().messages || [];
-  msgs.forEach(m => t.appendChild(bubble(m)));
-  scrollThread();
-}
-
-function configureCoachModels(meta){
+function configureCoachModels(meta) {
   coachModels = Array.isArray(meta.coachModels) ? meta.coachModels : [];
   const fallback = meta.defaultCoachSelection || coachSelection;
   let saved = null;
-  try { saved = JSON.parse(localStorage.getItem(COACH_MODEL_STORAGE_KEY)); } catch {}
-  try { localStorage.removeItem("practice-room-coach-model"); } catch {}
-  coachSelection = validCoachSelection(saved) || validCoachSelection(fallback) || coachSelection;
+  try {
+    saved = JSON.parse(localStorage.getItem(COACH_MODEL_STORAGE_KEY));
+  } catch {}
+  try {
+    localStorage.removeItem("practice-room-coach-model");
+  } catch {}
+  coachSelection =
+    validCoachSelection(saved) ||
+    validCoachSelection(fallback) ||
+    coachSelection;
   renderModelPicker();
 }
 
-function validCoachSelection(value){
+function validCoachSelection(value) {
   if (!value || typeof value !== "object") return null;
-  const model = coachModels.find(item => item.provider === value.provider && item.id === value.model);
+  const model = coachModels.find(
+    (item) => item.provider === value.provider && item.id === value.model,
+  );
   if (!model) return null;
-  const effort = model.efforts.includes(value.effort) ? value.effort : model.defaultEffort;
-  return {provider:model.provider, model:model.id, effort};
+  const effort = model.efforts.includes(value.effort)
+    ? value.effort
+    : model.defaultEffort;
+  return { provider: model.provider, model: model.id, effort };
 }
 
-function selectedCoachModel(selection=coachSelection){
-  return coachModels.find(item => item.provider === selection.provider && item.id === selection.model) || null;
+function selectedCoachModel(selection = coachSelection) {
+  return (
+    coachModels.find(
+      (item) =>
+        item.provider === selection.provider && item.id === selection.model,
+    ) || null
+  );
 }
 
-function modelMark(provider){ return provider === "anthropic" ? "CL" : "GPT"; }
-
-function effortLabel(effort){
-  return effort === "xhigh" ? "X-high" : effort.charAt(0).toUpperCase() + effort.slice(1);
+function modelMark(provider) {
+  return provider === "anthropic" ? "CL" : "GPT";
 }
 
-function formatCoachSelection(selection){
+function effortLabel(effort) {
+  return effort === "xhigh"
+    ? "X-high"
+    : effort.charAt(0).toUpperCase() + effort.slice(1);
+}
+
+function formatCoachSelection(selection) {
   const model = selectedCoachModel(selection || {});
   if (model) return `${model.label} · ${effortLabel(selection.effort)}`;
-  return selection && selection.model ? `${selection.model} · ${selection.effort || "default"}` : "coach model";
+  return selection && selection.model
+    ? `${selection.model} · ${selection.effort || "default"}`
+    : "coach model";
 }
 
-function wireModelPicker(){
-  $("modelTrigger").addEventListener("click", event => {
+function wireModelPicker() {
+  $("modelTrigger").addEventListener("click", (event) => {
     event.stopPropagation();
     setModelMenu($("modelMenu").hidden);
   });
   $("modelMenuClose").addEventListener("click", () => setModelMenu(false));
-  document.addEventListener("pointerdown", event => {
-    if (!$("modelMenu").hidden && !$("composer").contains(event.target)) setModelMenu(false);
+  document.addEventListener("pointerdown", (event) => {
+    if (!$("modelMenu").hidden && !$("composer").contains(event.target))
+      setModelMenu(false);
   });
-  document.addEventListener("keydown", event => {
+  document.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && !$("modelMenu").hidden) setModelMenu(false);
     const focusMenu = document.getElementById("focusModelMenu");
-    if (event.key === "Escape" && focusMenu && !focusMenu.hidden){
+    if (event.key === "Escape" && focusMenu && !focusMenu.hidden) {
       focusMenu.hidden = true;
-      document.getElementById("focusModelTrigger")?.setAttribute("aria-expanded", "false");
+      document
+        .getElementById("focusModelTrigger")
+        ?.setAttribute("aria-expanded", "false");
     }
   });
   window.visualViewport?.addEventListener("resize", positionModelMenu);
 }
 
-function setModelMenu(open){
+function setModelMenu(open) {
   $("modelMenu").hidden = !open;
   if (open) positionModelMenu();
-  if (!open && $("composer").contains(document.activeElement) && document.activeElement !== $("input")){
+  if (
+    !open &&
+    $("composer").contains(document.activeElement) &&
+    document.activeElement !== $("input")
+  ) {
     document.activeElement.blur();
   }
   $("modelTrigger").setAttribute("aria-expanded", String(open));
 }
 
-function positionModelMenu(){
+function positionModelMenu() {
   if (window.innerWidth > 520 || $("modelMenu").hidden) return;
-  const available = Math.max(280, $("composer").getBoundingClientRect().top - 12);
-  $("modelMenu").style.setProperty("--model-menu-max-height", String(available) + "px");
+  const available = Math.max(
+    280,
+    $("composer").getBoundingClientRect().top - 12,
+  );
+  $("modelMenu").style.setProperty(
+    "--model-menu-max-height",
+    String(available) + "px",
+  );
 }
 
-function chooseCoachModel(model){
+function chooseCoachModel(model) {
+  if (model.available === false) return;
   const effort = model.efforts.includes(coachSelection.effort)
-    ? coachSelection.effort : model.defaultEffort;
-  coachSelection = {provider:model.provider, model:model.id, effort};
+    ? coachSelection.effort
+    : model.defaultEffort;
+  coachSelection = { provider: model.provider, model: model.id, effort };
   saveCoachSelection();
   renderModelPicker();
   renderFocusModelPicker();
 }
 
-function chooseCoachEffort(effort){
+function chooseCoachEffort(effort) {
   const model = selectedCoachModel();
   if (!model || !model.efforts.includes(effort)) return;
-  coachSelection = {...coachSelection, effort};
+  coachSelection = { ...coachSelection, effort };
   saveCoachSelection();
   renderModelPicker();
   renderFocusModelPicker();
 }
 
-function saveCoachSelection(){
-  try { localStorage.setItem(COACH_MODEL_STORAGE_KEY, JSON.stringify(coachSelection)); } catch {}
+function saveCoachSelection() {
+  try {
+    localStorage.setItem(
+      COACH_MODEL_STORAGE_KEY,
+      JSON.stringify(coachSelection),
+    );
+  } catch {}
 }
 
-function renderModelPicker(){
+function renderModelPicker() {
   const selected = selectedCoachModel();
   if (!selected) return;
   $("modelProviderMark").textContent = modelMark(selected.provider);
-  $("modelProviderMark").classList.toggle("anthropic", selected.provider === "anthropic");
-  $("modelTriggerName").textContent = selected.label;
+  $("modelProviderMark").classList.toggle(
+    "anthropic",
+    selected.provider === "anthropic",
+  );
+  $("modelTriggerName").textContent =
+    selected.label + (selected.available === false ? " · unavailable" : "");
   $("modelTriggerEffort").textContent = effortLabel(coachSelection.effort);
 
   const list = $("modelMenuList");
   list.innerHTML = "";
-  [...new Set(coachModels.map(model => model.provider))].forEach(provider => {
-    const models = coachModels.filter(model => model.provider === provider);
-    const label = document.createElement("div");
-    label.className = "model-group-label";
-    label.textContent = models[0].providerLabel;
-    list.appendChild(label);
-    models.forEach(model => {
-      const button = document.createElement("button");
-      const active = model.provider === coachSelection.provider && model.id === coachSelection.model;
-      button.type = "button";
-      button.className = "model-option" + (active ? " selected" : "");
-      button.setAttribute("aria-pressed", String(active));
-      const mark = document.createElement("span");
-      mark.className = "model-option-mark" + (model.provider === "anthropic" ? " anthropic" : "");
-      mark.textContent = modelMark(model.provider);
-      const copy = document.createElement("span");
-      copy.className = "model-option-copy";
-      const name = document.createElement("strong");
-      name.textContent = model.label;
-      const description = document.createElement("span");
-      description.textContent = model.description;
-      copy.append(name, description);
-      const check = document.createElement("span");
-      check.className = "model-option-check";
-      check.textContent = "✓";
-      button.append(mark, copy, check);
-      button.addEventListener("click", () => chooseCoachModel(model));
-      list.appendChild(button);
-    });
-  });
+  [...new Set(coachModels.map((model) => model.provider))].forEach(
+    (provider) => {
+      const models = coachModels.filter((model) => model.provider === provider);
+      const label = document.createElement("div");
+      label.className = "model-group-label";
+      label.textContent = models[0].providerLabel;
+      list.appendChild(label);
+      models.forEach((model) => {
+        const button = document.createElement("button");
+        const active =
+          model.provider === coachSelection.provider &&
+          model.id === coachSelection.model;
+        button.type = "button";
+        button.className = "model-option" + (active ? " selected" : "");
+        button.disabled = model.available === false;
+        button.setAttribute("aria-pressed", String(active));
+        const mark = document.createElement("span");
+        mark.className =
+          "model-option-mark" +
+          (model.provider === "anthropic" ? " anthropic" : "");
+        mark.textContent = modelMark(model.provider);
+        const copy = document.createElement("span");
+        copy.className = "model-option-copy";
+        const name = document.createElement("strong");
+        name.textContent = model.label;
+        const description = document.createElement("span");
+        description.textContent =
+          model.available === false
+            ? "Unavailable on this PC · choose an available model"
+            : model.description;
+        copy.append(name, description);
+        const check = document.createElement("span");
+        check.className = "model-option-check";
+        check.textContent = "✓";
+        button.append(mark, copy, check);
+        button.addEventListener("click", () => chooseCoachModel(model));
+        list.appendChild(button);
+      });
+    },
+  );
 
-  $("reasoningHint").textContent = selected.provider === "anthropic"
-    ? "adaptive effort" : "quality · speed";
+  $("reasoningHint").textContent =
+    selected.provider === "anthropic" ? "adaptive effort" : "quality · speed";
   const options = $("reasoningOptions");
   options.innerHTML = "";
-  selected.efforts.forEach(effort => {
+  selected.efforts.forEach((effort) => {
     const button = document.createElement("button");
     const active = effort === coachSelection.effort;
     button.type = "button";
@@ -1508,11 +1292,11 @@ function renderModelPicker(){
   });
 }
 
-function wireFocusModelPicker(){
+function wireFocusModelPicker() {
   const trigger = document.getElementById("focusModelTrigger");
   if (!trigger) return;
   const menu = $("focusModelMenu");
-  trigger.addEventListener("click", event => {
+  trigger.addEventListener("click", (event) => {
     event.stopPropagation();
     const open = menu.hidden;
     menu.hidden = !open;
@@ -1522,8 +1306,8 @@ function wireFocusModelPicker(){
     menu.hidden = true;
     trigger.setAttribute("aria-expanded", "false");
   });
-  $("focusOverlay").onpointerdown = event => {
-    if (!menu.hidden && !event.target.closest(".focus-model-control")){
+  $("focusOverlay").onpointerdown = (event) => {
+    if (!menu.hidden && !event.target.closest(".focus-model-control")) {
       menu.hidden = true;
       trigger.setAttribute("aria-expanded", "false");
     }
@@ -1531,53 +1315,62 @@ function wireFocusModelPicker(){
   renderFocusModelPicker();
 }
 
-function renderFocusModelPicker(){
+function renderFocusModelPicker() {
   const trigger = document.getElementById("focusModelTrigger");
   const selected = selectedCoachModel();
   if (!trigger || !selected) return;
   $("focusModelProviderMark").textContent = modelMark(selected.provider);
-  $("focusModelProviderMark").classList.toggle("anthropic", selected.provider === "anthropic");
+  $("focusModelProviderMark").classList.toggle(
+    "anthropic",
+    selected.provider === "anthropic",
+  );
   $("focusModelTriggerName").textContent = selected.label;
   $("focusModelTriggerEffort").textContent = effortLabel(coachSelection.effort);
 
   const list = $("focusModelMenuList");
   list.innerHTML = "";
-  [...new Set(coachModels.map(model => model.provider))].forEach(provider => {
-    const models = coachModels.filter(model => model.provider === provider);
-    const label = document.createElement("div");
-    label.className = "model-group-label";
-    label.textContent = models[0].providerLabel;
-    list.appendChild(label);
-    models.forEach(model => {
-      const button = document.createElement("button");
-      const active = model.provider === coachSelection.provider && model.id === coachSelection.model;
-      button.type = "button";
-      button.className = "model-option" + (active ? " selected" : "");
-      button.setAttribute("aria-pressed", String(active));
-      const mark = document.createElement("span");
-      mark.className = "model-option-mark" + (model.provider === "anthropic" ? " anthropic" : "");
-      mark.textContent = modelMark(model.provider);
-      const copy = document.createElement("span");
-      copy.className = "model-option-copy";
-      const name = document.createElement("strong");
-      name.textContent = model.label;
-      const description = document.createElement("span");
-      description.textContent = model.description;
-      copy.append(name, description);
-      const check = document.createElement("span");
-      check.className = "model-option-check";
-      check.textContent = "✓";
-      button.append(mark, copy, check);
-      button.addEventListener("click", () => chooseCoachModel(model));
-      list.appendChild(button);
-    });
-  });
+  [...new Set(coachModels.map((model) => model.provider))].forEach(
+    (provider) => {
+      const models = coachModels.filter((model) => model.provider === provider);
+      const label = document.createElement("div");
+      label.className = "model-group-label";
+      label.textContent = models[0].providerLabel;
+      list.appendChild(label);
+      models.forEach((model) => {
+        const button = document.createElement("button");
+        const active =
+          model.provider === coachSelection.provider &&
+          model.id === coachSelection.model;
+        button.type = "button";
+        button.className = "model-option" + (active ? " selected" : "");
+        button.setAttribute("aria-pressed", String(active));
+        const mark = document.createElement("span");
+        mark.className =
+          "model-option-mark" +
+          (model.provider === "anthropic" ? " anthropic" : "");
+        mark.textContent = modelMark(model.provider);
+        const copy = document.createElement("span");
+        copy.className = "model-option-copy";
+        const name = document.createElement("strong");
+        name.textContent = model.label;
+        const description = document.createElement("span");
+        description.textContent = model.description;
+        copy.append(name, description);
+        const check = document.createElement("span");
+        check.className = "model-option-check";
+        check.textContent = "✓";
+        button.append(mark, copy, check);
+        button.addEventListener("click", () => chooseCoachModel(model));
+        list.appendChild(button);
+      });
+    },
+  );
 
-  $("focusReasoningHint").textContent = selected.provider === "anthropic"
-    ? "adaptive effort" : "quality · speed";
+  $("focusReasoningHint").textContent =
+    selected.provider === "anthropic" ? "adaptive effort" : "quality · speed";
   const options = $("focusReasoningOptions");
   options.innerHTML = "";
-  selected.efforts.forEach(effort => {
+  selected.efforts.forEach((effort) => {
     const button = document.createElement("button");
     const active = effort === coachSelection.effort;
     button.type = "button";
@@ -1589,17 +1382,21 @@ function renderFocusModelPicker(){
   });
 }
 
-function bubble(m){
+function bubble(m) {
   const d = document.createElement("div");
   d.className = "msg " + (m.role === "user" ? "user" : "coach");
-  const head = document.createElement("div"); head.className = "msg-head";
-  const who = document.createElement("div"); who.className = "who";
-  who.textContent = m.role === "user" ? (cfg.name || "you") : "coach";
+  const head = document.createElement("div");
+  head.className = "msg-head";
+  const who = document.createElement("div");
+  who.className = "who";
+  who.textContent = m.role === "user" ? cfg.name || "you" : "coach";
   head.appendChild(who);
-  if (m.role === "coach"){
-    const job = (coachQueue.jobs || []).find(item => item.messageId === m.replyTo || item.replyId === m.id);
+  if (m.role === "coach") {
+    const job = (coachQueue.jobs || []).find(
+      (item) => item.messageId === m.replyTo || item.replyId === m.id,
+    );
     const selection = m.selection || (job && job.selection);
-    if (selection){
+    if (selection) {
       const model = document.createElement("div");
       model.className = "response-model";
       model.textContent = formatCoachSelection(selection);
@@ -1610,32 +1407,34 @@ function bubble(m){
   const body = document.createElement("div");
   body.innerHTML = mdLite(m.text);
   d.appendChild(body);
-  if (m.role === "user" && m.id){
-    const job = (coachQueue.jobs || []).find(j => j.messageId === m.id);
+  if (m.role === "user" && m.id) {
+    const job = (coachQueue.jobs || []).find((j) => j.messageId === m.id);
     const activity = job ? coachActivity[job.id] : null;
-    if (job && (job.state !== "done" || activity)){
+    if (job && (job.state !== "done" || activity)) {
       const row = document.createElement("div");
       row.className = "queue-row";
-      if (job.state !== "done"){
+      if (job.state !== "done") {
         const status = document.createElement("span");
         status.className = "queue-state " + job.state;
-        if (job.state === "processing") status.textContent = "coach is replying…";
-        else if (job.state === "prepared") status.textContent = "reply ready · saving…";
+        if (job.state === "processing")
+          status.textContent = "coach is replying…";
+        else if (job.state === "prepared")
+          status.textContent = "reply ready · saving…";
         else if (job.state === "failed") {
-          status.textContent = "✓ saved · coach failed · retrying";
+          status.textContent = "Saved · coach needs attention";
           if (job.lastError) status.title = job.lastError;
         } else {
           status.textContent = `✓ saved · waiting${job.position ? ` · #${job.position}` : ""}`;
         }
         row.appendChild(status);
       }
-      if (job.selection){
+      if (job.selection) {
         const model = document.createElement("span");
         model.className = "queue-model";
         model.textContent = formatCoachSelection(job.selection);
         row.appendChild(model);
       }
-      if (activity && (activity.events || []).length){
+      if (activity && (activity.events || []).length) {
         const toggle = document.createElement("button");
         const expanded = expandedActivities.has(job.id);
         toggle.className = "activity-toggle";
@@ -1650,7 +1449,7 @@ function bubble(m){
         row.appendChild(toggle);
       }
       d.appendChild(row);
-      if (activity && expandedActivities.has(job.id)){
+      if (activity && expandedActivities.has(job.id)) {
         d.appendChild(renderCoachActivity(activity));
       }
     }
@@ -1658,28 +1457,38 @@ function bubble(m){
   return d;
 }
 
-function renderCoachActivity(activity){
+function renderCoachActivity(activity) {
   const panel = document.createElement("div");
   panel.className = "coach-activity";
   const head = document.createElement("div");
   head.className = "activity-head";
   const stateLabels = {
-    running:"↻ running", validating:"◆ checking", saving:"◆ saving",
-    done:"✓ done", failed:"✕ failed"
+    running: "↻ running",
+    validating: "◆ checking",
+    saving: "◆ saving",
+    done: "✓ done",
+    failed: "✕ failed",
   };
-  const model = String(activity.model || "coach").replace(/^claude-/, "").replaceAll("-", " ");
+  const model = String(activity.model || "coach")
+    .replace(/^claude-/, "")
+    .replaceAll("-", " ");
   head.textContent = `${model} · ${formatActivityElapsed(activity)} · ${stateLabels[activity.state] || activity.state}`;
   panel.appendChild(head);
 
   const list = document.createElement("ol");
   list.className = "activity-list";
-  (activity.events || []).forEach(event => {
+  (activity.events || []).forEach((event) => {
     const item = document.createElement("li");
     item.className = "activity-event kind-" + (event.kind || "event");
     const stamp = document.createElement("time");
     const parsed = new Date(event.at);
-    stamp.textContent = Number.isNaN(parsed.getTime()) ? "" :
-      parsed.toLocaleTimeString([], {hour:"2-digit", minute:"2-digit", second:"2-digit"});
+    stamp.textContent = Number.isNaN(parsed.getTime())
+      ? ""
+      : parsed.toLocaleTimeString([], {
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit",
+        });
     const label = document.createElement("span");
     label.textContent = event.label;
     item.append(stamp, label);
@@ -1689,39 +1498,54 @@ function renderCoachActivity(activity){
 
   const note = document.createElement("p");
   note.className = "activity-note";
-  note.textContent = "Tool activity and reasoning stages are shown. Private internal reasoning is not exposed.";
+  note.textContent =
+    "Tool activity and reasoning stages are shown. Private internal reasoning is not exposed.";
   panel.appendChild(note);
   return panel;
 }
 
-function formatActivityElapsed(activity){
+function formatActivityElapsed(activity) {
   const start = new Date(activity.startedAt).getTime();
   const end = new Date(activity.finishedAt || Date.now()).getTime();
-  if (!Number.isFinite(start) || !Number.isFinite(end)) return "time unavailable";
+  if (!Number.isFinite(start) || !Number.isFinite(end))
+    return "time unavailable";
   const seconds = Math.max(0, Math.round((end - start) / 1000));
   const minutes = Math.floor(seconds / 60);
   const rest = seconds % 60;
   return minutes ? `${minutes}m ${String(rest).padStart(2, "0")}s` : `${rest}s`;
 }
 
-function scrollThread(){
-  if (currentView !== "coach") return;
-  requestAnimationFrame(() => { const t = $("thread"); t.scrollTop = t.scrollHeight; window.scrollTo(0, document.body.scrollHeight); });
+function scrollThread() {
+  if (currentView === "coach")
+    requestAnimationFrame(() => {
+      const t = $("thread");
+      t.scrollTop = t.scrollHeight;
+    });
 }
 
-function mdLite(text){
+function mdLite(text) {
   let h = String(text)
-    .replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
-  h = h.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
-       .replace(/`([^`]+)`/g, "<code>$1</code>");
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+  h = h
+    .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+    .replace(/`([^`]+)`/g, "<code>$1</code>");
   const lines = h.split(/\n/);
-  let out = "", inList = false;
-  for (const ln of lines){
-    if (/^\s*[-•] /.test(ln)){
-      if (!inList){ out += "<ul>"; inList = true; }
-      out += "<li>" + ln.replace(/^\s*[-•] /,"") + "</li>";
+  let out = "",
+    inList = false;
+  for (const ln of lines) {
+    if (/^\s*[-•] /.test(ln)) {
+      if (!inList) {
+        out += "<ul>";
+        inList = true;
+      }
+      out += "<li>" + ln.replace(/^\s*[-•] /, "") + "</li>";
     } else {
-      if (inList){ out += "</ul>"; inList = false; }
+      if (inList) {
+        out += "</ul>";
+        inList = false;
+      }
       if (ln.trim()) out += "<p>" + ln + "</p>";
     }
   }
@@ -1729,94 +1553,113 @@ function mdLite(text){
   return out;
 }
 
-async function sendMessage(){
+async function sendMessage() {
   const box = $("input");
   const text = box.value.trim();
   if (!text) return;
+  if (selectedCoachModel()?.available === false) {
+    banner(
+      "The selected coach model is unavailable on this PC. Choose an available model; your draft is kept.",
+      true,
+    );
+    setModelMenu(true);
+    return;
+  }
   $("send").disabled = true;
   try {
     let outbox = null;
-    try { outbox = JSON.parse(localStorage.getItem("practice-room-chat-outbox")); } catch {}
-    const sameSelection = outbox && JSON.stringify(outbox.selection) === JSON.stringify(coachSelection);
-    const requestId = outbox && outbox.text === text && sameSelection ? outbox.requestId :
-      (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`);
-    const selection = {...coachSelection};
-    try { localStorage.setItem("practice-room-chat-outbox", JSON.stringify({requestId, text, selection})); } catch {}
-    const r = await fetch("/api/chat", { method:"POST", headers:{"Content-Type":"application/json"},
-      body: JSON.stringify({ text, requestId, selection }) });
-    if (!r.ok) throw new Error("Couldn't reach the coach — is the laptop awake?");
-    const accepted = await r.json();
+    try {
+      outbox = JSON.parse(localStorage.getItem("practice-room-chat-outbox"));
+    } catch {}
+    const sameSelection =
+      outbox &&
+      JSON.stringify(outbox.selection) === JSON.stringify(coachSelection);
+    const requestId =
+      outbox && outbox.text === text && sameSelection
+        ? outbox.requestId
+        : crypto.randomUUID
+          ? crypto.randomUUID()
+          : `${Date.now()}-${Math.random()}`;
+    const selection = { ...coachSelection };
+    try {
+      localStorage.setItem(
+        "practice-room-chat-outbox",
+        JSON.stringify({ requestId, text, selection }),
+      );
+    } catch {}
+    const accepted = await api("/api/chat", { text, requestId, selection });
     const message = accepted.job.message;
-    if (!(docs[FILES.chat].obj.messages || []).some(m => m.id === message.id)){
+    if (
+      !(docs[FILES.chat].obj.messages || []).some((m) => m.id === message.id)
+    ) {
       docs[FILES.chat].obj.messages.push(message);
     }
-    const idx = (coachQueue.jobs || []).findIndex(j => j.id === accepted.job.id);
+    const idx = (coachQueue.jobs || []).findIndex(
+      (j) => j.id === accepted.job.id,
+    );
     if (idx >= 0) coachQueue.jobs[idx] = accepted.job;
     else coachQueue.jobs.push(accepted.job);
-    coachQueue.pending = (coachQueue.jobs || []).filter(j => ["queued","failed"].includes(j.state)).length;
-    try { localStorage.removeItem("practice-room-chat-outbox"); } catch {}
-    box.value = "";
-    renderCoach();
+    coachQueue.pending = (coachQueue.jobs || []).filter((j) =>
+      ["queued", "failed"].includes(j.state),
+    ).length;
+    try {
+      localStorage.removeItem("practice-room-chat-outbox");
+    } catch {}
+    if (box.value.trim() === text) {
+      box.value = "";
+      localStorage.removeItem("practice-room-chat-draft");
+    }
+    renderCoach(true);
     startPolling();
-  } catch (e){ banner(e.message, true); }
+  } catch (e) {
+    banner(e.message, true);
+  }
   $("send").disabled = false;
 }
 
-function startPolling(){
+function startPolling() {
   stopPolling();
   pollTimer = setInterval(async () => {
     try {
       const [fresh, meta] = await Promise.all([
-        ghGet(FILES.chat, {fresh:true}),
-        fetch(`/api/meta?t=${Date.now()}`, {cache:"no-store"}).then(r => r.json()),
+        ghGet(FILES.chat, { fresh: true }),
+        fetch(`/api/meta?t=${Date.now()}`, { cache: "no-store" }).then((r) =>
+          r.json(),
+        ),
       ]);
       docs[FILES.chat] = fresh;
       coachQueue = meta.coachQueue || coachQueue;
       coachActivity = meta.coachActivity || coachActivity;
       renderCoach();
-      if (!coachQueue.pending && !coachQueue.processing){
+      if (!coachQueue.pending && !coachQueue.processing) {
         stopPolling();
-        const [st, wp, jr] = await Promise.all([
-          ghGet(FILES.state,{fresh:true}),
-          ghGet(FILES.weekly,{fresh:true}).catch(() => docs[FILES.weekly]),
-          ghGet(FILES.journal,{fresh:true})
-        ]);
-        docs[FILES.state] = st; docs[FILES.weekly] = wp; docs[FILES.journal] = jr;
-        renderAll();
+        await refreshQuiet();
         if (currentView !== "coach") $("coachDot").hidden = false;
         return;
       }
     } catch {}
   }, 2000);
 }
-function stopPolling(){ if (pollTimer){ clearInterval(pollTimer); pollTimer = null; } }
+function stopPolling() {
+  if (pollTimer) {
+    clearInterval(pollTimer);
+    pollTimer = null;
+  }
+}
 
-async function toggleMemory(){
+async function toggleMemory() {
   const panel = $("memPanel");
-  if (!panel.hidden){ panel.hidden = true; return; }
+  if (!panel.hidden) {
+    panel.hidden = true;
+    return;
+  }
   panel.hidden = false;
   panel.innerHTML = "<em>loading…</em>";
   try {
-    const m = await ghGet(FILES.memory, {fresh:true});
+    const m = await ghGet(FILES.memory, { fresh: true });
     panel.innerHTML = mdLite(m.obj);
-  } catch { panel.innerHTML = "<em>No memory file yet — it appears after your first conversation.</em>"; }
-}
-
-/* ── journal ─────────────────────────────────────────────── */
-function renderJournal(){
-  const wrap = $("entries"); wrap.innerHTML = "";
-  const entries = (journal().entries || []).slice().reverse();
-  if (!entries.length){
-    wrap.innerHTML = `<div class="card"><p class="sub">Nothing here yet. After your first
-      evening debrief, the coach writes the entry for you.</p></div>`;
-    return;
+  } catch {
+    panel.innerHTML =
+      "<em>No memory file yet — it appears after your first conversation.</em>";
   }
-  entries.forEach(e => {
-    const d = document.createElement("div");
-    d.className = "entry";
-    d.innerHTML = `<div class="e-date">${e.date} · day ${e.day}</div><h2></h2><div class="e-body"></div>`;
-    d.querySelector("h2").textContent = e.title || "Practice day";
-    d.querySelector(".e-body").innerHTML = mdLite(e.body || "");
-    wrap.appendChild(d);
-  });
 }
