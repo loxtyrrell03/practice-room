@@ -449,6 +449,16 @@ class SessionHttpTests(ServiceFixture):
         connection.close()
         return result
 
+    def test_meta_reports_archived_inflight_work_as_busy_for_safe_restart(self):
+        with patch.object(server, "get_observation_pipeline") as pipeline, patch.object(server, "git", return_value=(False, "")), patch.object(server, "coach_queue", None):
+            pipeline.return_value.summary.return_value = {"counts": {"processing": 0, "pending": 0}, "processingTotal": 1}
+            status, _, body = self.request("GET", "/api/meta")
+        meta = json.loads(body)
+        self.assertEqual(200, status)
+        self.assertTrue(meta["coachRunning"])
+        self.assertEqual(0, meta["practiceLogs"]["counts"]["processing"])
+        self.assertEqual(1, meta["practiceLogs"]["processingTotal"])
+
     def test_year_and_sessions_endpoints_use_private_service_and_no_store(self):
         for route, key in (("/api/year", "deadlines"), ("/api/sessions", "sessions")):
             status, headers, body = self.request("GET", route)

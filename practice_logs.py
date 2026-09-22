@@ -388,11 +388,17 @@ class ObservationPipeline:
             observations, changed = self._load_observations_unlocked()
             if changed:
                 atomic_write_json(self.observations_path, observations)
-            counts = {key: 0 for key in ("pending", "processing", "processed", "failed")}
-            for row in observations["obs"]:
+            counts = {key: 0 for key in ("pending", "processing", "processed", "failed", "needsReview")}
+            for row in self._current_rows_unlocked(observations):
                 counts[row["status"]] = counts.get(row["status"], 0) + 1
+                if row["status"] == "processed" and not row.get("acknowledgedAt"):
+                    counts["needsReview"] += 1
+            # Service lifecycle checks must also see a batch claimed before a
+            # programme change, even though it no longer contributes a badge.
+            processing_total = sum(row["status"] == "processing" for row in observations["obs"])
         return {
             "counts": counts,
+            "processingTotal": processing_total,
             "timezone": "Europe/London",
             "dailyTime": self.daily_time_text,
             "nextDueAt": iso_z(self.next_due(now)),
@@ -424,6 +430,49 @@ class ObservationPipeline:
                 atomic_write_json(self.observations_path, observations)
         return changed
 
+    def _current_rows_unlocked(self, observations: dict) -> list[dict]:
+        """Select current programme evidence without changing archived records.
+
+        Older installations only have state.startDate. Missing scope fields keep
+        that legacy behaviour, but a configured programme boundary applies to
+        general notes as well as notes about a piece still in the repertoire.
+        """
+        scope = {}
+        for rel in ("data/state.json", "data/academic-year.json"):
+            try:
+                document = json.loads(read_text(self._path(rel), "{}"))
+            except (json.JSONDecodeError, UnicodeError) as exc:
+                raise PipelineError(f"{rel} is not valid JSON") from exc
+            if not isinstance(document, dict):
+                raise PipelineError(f"{rel} must contain an object")
+            scope[rel] = document
+        state = scope["data/state.json"]
+        year = scope["data/academic-year.json"]
+        start_value = year.get("startDate") or state.get("startDate")
+        try:
+            start_date = date.fromisoformat(start_value) if start_value else None
+        except (TypeError, ValueError) as exc:
+            raise PipelineError("Programme startDate must be a valid calendar date") from exc
+        pieces = state.get("pieces")
+        active_ids = (
+            {piece.get("id") for piece in pieces if isinstance(piece, dict)}
+            if isinstance(pieces, list) else None
+        )
+        current = []
+        for row in observations["obs"]:
+            if row.get("pieceId") and active_ids is not None and row["pieceId"] not in active_ids:
+                continue
+            if start_date is not None:
+                try:
+                    observed_date = date.fromisoformat(row.get("localDate"))
+                except (TypeError, ValueError):
+                    timestamp = parse_iso(row.get("ts")) or parse_iso(row.get("savedAt"))
+                    observed_date = timestamp.astimezone(UK_TZ).date() if timestamp else None
+                if observed_date is None or observed_date < start_date:
+                    continue
+            current.append(row)
+        return current
+
     def _eligible(
         self,
         observations: dict,
@@ -433,7 +482,7 @@ class ObservationPipeline:
     ) -> list[dict]:
         cutoff_utc = ensure_aware(cutoff).astimezone(timezone.utc)
         eligible = []
-        for row in observations["obs"]:
+        for row in self._current_rows_unlocked(observations):
             if row.get("status") == "pending" or (
                 include_failed and row.get("status") == "failed"
             ):
@@ -632,7 +681,7 @@ class ObservationPipeline:
                     route_ids = {row["id"] for row in route_rows}
                     review_rows = [
                         row
-                        for row in observations["obs"]
+                        for row in self._current_rows_unlocked(observations)
                         if row.get("status") == "processed"
                         and not row.get("acknowledgedAt")
                         and row["id"] not in route_ids

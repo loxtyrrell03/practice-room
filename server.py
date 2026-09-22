@@ -865,7 +865,7 @@ class Handler(SimpleHTTPRequestHandler):
                 "failed": 0,
                 "jobs": [],
             }
-            log_processing = practice_logs["counts"].get("processing", 0)
+            log_processing = practice_logs.get("processingTotal", practice_logs["counts"].get("processing", 0))
             return self._json(
                 200,
                 {
@@ -1009,11 +1009,11 @@ def background_loop():
             last_autosave = time.monotonic()
             try:
                 queue = coach_queue.snapshot()
-                logs = get_observation_pipeline().summary()["counts"]
+                logs = get_observation_pipeline().summary()
                 if (
                     not queue["pending"]
                     and not queue["processing"]
-                    and not logs.get("processing", 0)
+                    and not logs.get("processingTotal", logs["counts"].get("processing", 0))
                 ):
                     sync_push("autosave")
             except Exception:

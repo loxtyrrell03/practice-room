@@ -7,7 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from practice_logs import ObservationPipeline
+from practice_logs import ObservationPipeline, PipelineError
 
 
 class SimulatedCrash(BaseException):
@@ -635,6 +635,132 @@ class PracticeLogTests(unittest.TestCase):
         self.assertEqual("Europe/London", summary["timezone"])
         # 20:30 BST is 19:30 UTC.
         self.assertEqual("2026-07-29T19:30:00Z", summary["nextDueAt"])
+
+    def configure_new_programme(self):
+        # Keep the old state.startDate to prove the academic-year boundary wins.
+        write_json(self.data / "data/academic-year.json", {
+            "schemaVersion": 1,
+            "title": "Academic year 2026–27",
+            "startDate": "2026-09-22",
+            "dailyTargetMinutes": {"min": 240, "max": 360},
+            "deadlines": [],
+        })
+
+    def scoped_note(self, pipeline, client_id, day, *, piece_id=None, status="pending"):
+        entry, _ = pipeline.submit({
+            "clientId": client_id,
+            "day": 1,
+            "blockId": f"block-{client_id}",
+            "block": "Fixture block",
+            "pieceId": piece_id,
+            "text": f"note {client_id}",
+        }, now=datetime.fromisoformat(f"{day}T12:00:00+00:00"))
+        if status != "pending":
+            document = read_json(self.data / "data/observations.json")
+            row = next(row for row in document["obs"] if row["id"] == entry["id"])
+            row["status"] = status
+            if status == "processed":
+                row["processedAt"] = f"{day}T13:00:00Z"
+                row["processedBy"] = "daily"
+            write_json(self.data / "data/observations.json", document)
+        return entry["id"]
+
+    def test_daily_routes_current_programme_only_and_preserves_archived_notes(self):
+        self.configure_new_programme()
+        pipeline = self.pipeline()
+        archived = {
+            self.scoped_note(pipeline, "previous-year-same-piece", "2026-08-04", piece_id="piece-1"),
+            self.scoped_note(pipeline, "previous-year-general", "2026-08-04"),
+            self.scoped_note(pipeline, "retired-piece", "2026-09-22", piece_id="scriabin"),
+            self.scoped_note(pipeline, "old-failed", "2026-08-04", status="failed"),
+        }
+        current = {
+            self.scoped_note(pipeline, "current-piece", "2026-09-22", piece_id="piece-1"),
+            self.scoped_note(pipeline, "current-general", "2026-09-22"),
+            self.scoped_note(pipeline, "current-failed", "2026-09-22", status="failed"),
+        }
+        archive_before = [row for row in self.observation_rows() if row["id"] in archived]
+        runner = FakeCoach()
+        result = pipeline.run_due(runner, now=datetime(2026, 9, 22, 20, tzinfo=timezone.utc))
+        self.assertEqual("processed", result["status"])
+        self.assertEqual(current, set(runner.calls[0]["route"]))
+        self.assertEqual(archive_before, [row for row in self.observation_rows() if row["id"] in archived])
+        self.assertEqual(len(current), len(self.effects()[0]))
+
+    def test_debrief_reviews_only_current_processed_evidence_without_archival_acknowledgment(self):
+        self.configure_new_programme()
+        pipeline = self.pipeline()
+        archived = {
+            self.scoped_note(pipeline, "old-same-piece-review", "2026-08-04", piece_id="piece-1", status="processed"),
+            self.scoped_note(pipeline, "old-general-review", "2026-08-04", status="processed"),
+            self.scoped_note(pipeline, "retired-piece-review", "2026-09-22", piece_id="scriabin", status="processed"),
+        }
+        current = {
+            self.scoped_note(pipeline, "current-piece-review", "2026-09-22", piece_id="piece-1", status="processed"),
+            self.scoped_note(pipeline, "current-general-review", "2026-09-22", status="processed"),
+        }
+        route_id = self.scoped_note(pipeline, "new-route", "2026-09-22", piece_id="piece-1")
+        archive_before = [row for row in self.observation_rows() if row["id"] in archived]
+        runner = FakeCoach()
+        result = pipeline.process_for_coach(runner, source_key="current-year-debrief", is_debrief=True,
+                                           now=datetime(2026, 9, 22, 20, tzinfo=timezone.utc))
+        self.assertEqual("processed", result["status"])
+        self.assertEqual([route_id], runner.calls[0]["route"])
+        self.assertEqual(current, set(runner.calls[0]["review"]))
+        self.assertEqual(archive_before, [row for row in self.observation_rows() if row["id"] in archived])
+        self.assertTrue(all(row["acknowledgedAt"] for row in self.observation_rows() if row["id"] in current))
+
+    def test_summary_reports_current_counts_and_review_needs_without_changing_archive(self):
+        self.configure_new_programme()
+        pipeline = self.pipeline()
+        for status in ("pending", "processing", "processed", "failed"):
+            self.scoped_note(pipeline, f"archived-{status}", "2026-08-04", status=status)
+            self.scoped_note(pipeline, f"retired-{status}", "2026-09-22", piece_id="scriabin", status=status)
+            self.scoped_note(pipeline, f"current-{status}", "2026-09-22", status=status)
+        self.scoped_note(pipeline, "already-reviewed", "2026-09-22", status="processed")
+        document = read_json(self.data / "data/observations.json")
+        document["obs"][-1]["acknowledgedAt"] = "2026-09-22T14:00:00Z"
+        write_json(self.data / "data/observations.json", document)
+        before = self.observation_rows()
+        summary = pipeline.summary()
+        counts = summary["counts"]
+        self.assertEqual({"pending": 1, "processing": 1, "processed": 2, "failed": 1, "needsReview": 1}, counts)
+        self.assertEqual(3, summary["processingTotal"])
+        self.assertEqual(before, self.observation_rows())
+
+    def test_legacy_state_boundary_uses_inclusive_uk_calendar_date(self):
+        pipeline = self.pipeline()
+        before, _ = self.submit(pipeline, "before-start", datetime(2026, 7, 28, 22, 59, tzinfo=timezone.utc))
+        first, _ = self.submit(pipeline, "midnight-start", datetime(2026, 7, 28, 23, 0, tzinfo=timezone.utc))
+        second, _ = self.submit(pipeline, "start-day", datetime(2026, 7, 29, 12, 0, tzinfo=timezone.utc))
+        runner = FakeCoach()
+        result = pipeline.run_due(runner, now=datetime(2026, 7, 29, 20, tzinfo=timezone.utc))
+        self.assertEqual("processed", result["status"])
+        self.assertEqual({first["id"], second["id"]}, set(runner.calls[0]["route"]))
+        self.assertEqual("pending", next(row for row in self.observation_rows() if row["id"] == before["id"])["status"])
+
+    def test_programme_scope_is_reloaded_when_start_date_or_repertoire_changes(self):
+        pipeline = self.pipeline()
+        self.scoped_note(pipeline, "older-note", "2026-08-04", piece_id="piece-1")
+        self.scoped_note(pipeline, "today-note", "2026-09-22", piece_id="piece-1")
+        self.assertEqual(2, pipeline.summary()["counts"]["pending"])
+        self.configure_new_programme()
+        self.assertEqual(1, pipeline.summary()["counts"]["pending"])
+        state = read_json(self.data / "data/state.json")
+        state["pieces"] = []
+        write_json(self.data / "data/state.json", state)
+        self.assertEqual(0, pipeline.summary()["counts"]["pending"])
+        self.assertEqual(2, len(self.observation_rows()))
+
+    def test_invalid_programme_scope_does_not_route_or_mark_notes_processed(self):
+        pipeline = self.pipeline()
+        self.scoped_note(pipeline, "scope-error", "2026-09-22")
+        write_json(self.data / "data/academic-year.json", {"startDate": "unknown"})
+        runner = FakeCoach()
+        with self.assertRaisesRegex(PipelineError, "startDate"):
+            pipeline.run_due(runner, now=datetime(2026, 9, 22, 20, tzinfo=timezone.utc))
+        self.assertEqual([], runner.calls)
+        self.assertEqual("pending", self.observation_rows()[0]["status"])
 
 
 if __name__ == "__main__":
