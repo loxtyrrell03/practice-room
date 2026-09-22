@@ -130,8 +130,11 @@ function fmt(mins) {
     ? `${Math.floor(m / 60)} h${m % 60 ? ` ${m % 60} min` : ""}`
     : `${m} min`;
 }
+function visibleSessions() {
+  return sessionsDoc.sessions.filter((s) => !["cancelled", "canceled"].includes(s.bookingStatus));
+}
 function currentSession() {
-  return sessionsDoc.sessions.find((s) => s.id === selectedSessionId);
+  return visibleSessions().find((s) => s.id === selectedSessionId);
 }
 function focusItems() {
   const session = sessionsDoc.sessions.find(
@@ -395,7 +398,7 @@ function renderWeek() {
   );
   $("weekTitle").textContent =
     `${dateLabel(dates[0], { day: "numeric", month: "short" })} – ${dateLabel(dates[6], { day: "numeric", month: "long" })}`;
-  $("weekSubtitle").textContent = "Time for the work that matters next.";
+  $("weekSubtitle").textContent = "";
   $("weekMetrics").innerHTML =
     `<div><span>Booked in this plan ${help("Booked room time for the sessions shown this week. Earlier bookings without a saved session are not included.")}</span><strong>${fmt(sum("bookedMinutes"))}</strong></div><div><span>Planned playing</span><strong>${fmt(sum("playingMinutes"))}</strong></div><div><span>Also in your sessions</span><strong class="smaller">${fmt(sum("studyMinutes"))} study · ${fmt(sum("restMinutes"))} rest & preparation</strong></div>`;
   $("coverageNote").textContent =
@@ -409,7 +412,7 @@ function renderWeek() {
       return `<button class="day-tab ${date === selectedDate ? "active" : ""}" data-date="${date}" aria-pressed="${date === selectedDate}"><span>${dateLabel(date, { weekday: "short" })}</span><strong>${dateObj(date).getUTCDate()}</strong><small>${known ? fmt(d?.bookedMinutes || 0) : "Unknown"}</small>${date === ukDate() ? '<i aria-label="Today"></i>' : ""}</button>`;
     })
     .join("");
-  const rows = sessionsDoc.sessions.filter((s) => s.date === selectedDate);
+  const rows = visibleSessions().filter((s) => s.date === selectedDate);
   if (!rows.some((s) => s.id === selectedSessionId)) {
     const active = rows.find((s) =>
       s.blocks?.some((b) => ["active", "paused"].includes(b.status)),
@@ -438,12 +441,12 @@ function sessionRow(s) {
 }
 function emptySessions(date) {
   const covered = sessionsDoc.sync?.coveredDates?.includes(date);
-  return `<div class="empty-panel"><h3>${covered ? "No rooms booked" : "Bookings not yet known"}</h3><p>${covered ? "Keep the day useful with score study, or make a room booking in Booker." : "Refresh ASIMUT to see whether room time is available for this date."}</p><a class="text-button" href="https://lox-pc.tail89d19b.ts.net:10443/" target="_blank" rel="noopener">Open Booker ↗</a></div>`;
+  return `<div class="empty-panel"><h3>${covered ? "No rooms booked" : "Bookings not yet known"}</h3><a class="text-button" href="https://lox-pc.tail89d19b.ts.net:10443/" target="_blank" rel="noopener">Open Booker ↗</a></div>`;
 }
 function priorityPanel(date) {
-  const pieces = (state().pieces || []).slice(0, 3);
-  return `<div class="empty-panel priority-panel"><div class="eyebrow">OFF-BENCH OPTIONS</div><h2>A useful next step</h2><p>These are unscheduled study ideas, not room reservations.</p>${pieces.map((p) => `<div class="priority-row"><h3>${esc(p.short || p.title)}</h3><p>${esc(p.planning?.focus || p.statusPoints?.find((x) => x.lead === "Next checkpoint")?.text || "Map one section in the score and note the question to test at the piano.")}</p></div>`).join("")}${button("Open repertoire →", 'data-switch="programme"')}</div>`;
+  return "";
 }
+
 function sessionTotals(s) {
   const blocks = (s.blocks || []).filter(
     (b) => !["missed", "skipped"].includes(b.status),
@@ -469,7 +472,7 @@ function sessionDetail(s) {
     s.blocks.find((b) => ["active", "paused"].includes(b.status)) ||
     s.blocks.find((b) => !b.done && !["skipped", "missed"].includes(b.status));
   const valid = canStart(s);
-  return `<div class="detail-heading"><div><div class="eyebrow">${esc(s.bookingStatus === "confirmed" ? "BOOKED SESSION" : s.bookingStatus)}</div><h2>${clockLabel(s.start)}–${clockLabel(s.end)}</h2><p>${esc(s.room)} · ${fmt(s.bookedMinutes)} booked</p></div>${help("Plans adapt automatically when confirmed room availability changes. Started and completed blocks, notes and tests are preserved.", "How sessions adapt")}</div>${s.notice ? `<div class="inline-notice">${esc(s.notice)}</div>` : ""}${!valid ? `<p class="inline-notice warning">${esc(noStartReason(s))}</p>` : ""}<div class="session-totals"><span>${fmt(totals.playing)} playing</span><span>${fmt(totals.study)} study</span><span>${fmt(totals.rest)} rest</span><span>${fmt(totals.prep)} preparation</span></div><div class="session-blocks">${s.blocks.map((b) => blockRow(s, b)).join("") || '<p class="muted">No blocks allocated in this window.</p>'}</div><div class="session-actions">${next ? button(["active", "paused"].includes(next.status) ? "Continue session →" : valid ? "Start session →" : "View session →", `data-focus-session="${esc(s.id)}" data-focus-block="${esc(next.id)}"`, true) : '<span class="status good">All blocks accounted for</span>'}${button("Shorten session", `data-adjust="${esc(s.id)}" ${!canAdjust(s) ? "disabled" : ""}`)}</div><p class="small muted">The timetable adapts to your bookings. A completed block records practice, not readiness.</p>`;
+  return `<div class="detail-heading"><div><div class="eyebrow">${esc(s.bookingStatus === "confirmed" ? "BOOKED SESSION" : s.bookingStatus)}</div><h2>${clockLabel(s.start)}–${clockLabel(s.end)}</h2><p>${esc(s.room)} · ${fmt(s.bookedMinutes)} booked</p></div>${help("Plans adapt automatically when confirmed room availability changes. Started and completed blocks, notes and tests are preserved.", "How sessions adapt")}</div>${s.notice ? `<div class="inline-notice">${esc(s.notice)}</div>` : ""}${!valid ? `<p class="inline-notice warning">${esc(noStartReason(s))}</p>` : ""}<div class="session-totals"><span>${fmt(totals.playing)} playing</span><span>${fmt(totals.study)} study</span><span>${fmt(totals.rest)} rest</span><span>${fmt(totals.prep)} preparation</span></div><div class="session-blocks">${s.blocks.map((b) => blockRow(s, b)).join("")}</div><div class="session-actions">${next ? button(["active", "paused"].includes(next.status) ? "Continue session →" : valid ? "Start session →" : "View session →", `data-focus-session="${esc(s.id)}" data-focus-block="${esc(next.id)}"`, true) : ""}${button("Shorten session", `data-adjust="${esc(s.id)}" ${!canAdjust(s) ? "disabled" : ""}`)}</div>`;
 }
 function blockRow(s, b) {
   const terminal = b.done || ["skipped", "missed"].includes(b.status);
@@ -484,7 +487,7 @@ function instructions(b) {
 function renderToday() {
   const date = sessionsDoc.today || ukDate();
   $("todayDate").textContent = dateLabel(date).toUpperCase();
-  const rows = sessionsDoc.sessions.filter((s) => s.date === date),
+  const rows = visibleSessions().filter((s) => s.date === date),
     next =
       rows.find((s) =>
         s.blocks?.some((b) => ["active", "paused"].includes(b.status)),
@@ -492,7 +495,7 @@ function renderToday() {
   const day = sessionsDoc.days?.find((d) => d.date === date);
   const target = sessionsDoc.dailyTargetMinutes || { min: 240, max: 360 };
   $("todayContent").innerHTML =
-    `<div class="today-capacity"><strong>${fmt(day?.bookedMinutes || 0)} booked</strong><span>${fmt(day?.playingMinutes || 0)} planned playing · ${fmt(day?.studyMinutes || 0)} study</span><span>Daily aspiration ${fmt(target.min)}–${fmt(target.max)} ${help("The aspiration includes focused playing and study. Rest and preparation are separate. Missing booked time is not a debt to repay.")}</span></div>${next ? `<div class="session-detail today-session">${sessionDetail(next)}</div>` : (rows.length ? '<div class="empty-panel"><h2>Today’s room bookings have ended.</h2><p>Your recorded practice stays in the week view. A missed block is not marked complete.</p></div>' : emptySessions(date)) + priorityPanel(date)}`;
+    `<div class="today-capacity"><strong>${fmt(day?.bookedMinutes || 0)} booked</strong><span>${fmt(day?.playingMinutes || 0)} planned playing · ${fmt(day?.studyMinutes || 0)} study</span><span>Daily aspiration ${fmt(target.min)}–${fmt(target.max)} ${help("The aspiration includes focused playing and study. Rest and preparation are separate. Missing booked time is not a debt to repay.")}</span></div>${next ? `<div class="session-detail today-session">${sessionDetail(next)}</div>` : (rows.length ? '<div class="empty-panel"><h2>Today’s room bookings have ended.</h2></div>' : emptySessions(date)) + priorityPanel(date)}`;
   wireNotes($("todayContent"));
 }
 function drafts() {
@@ -613,7 +616,7 @@ function renderFocus() {
     valid = active ? canStart(s) : canStart(s, b);
   const index = s.blocks.indexOf(b);
   $("focusContent").innerHTML =
-    `<div class="focus-top"><button class="text-button" data-focus-close>← Session</button><span>${index + 1} of ${s.blocks.length} blocks</span><button class="icon-button" data-focus-close aria-label="Close focus">×</button></div><div class="focus-progress"><i style="width:${(100 * (index + 1)) / s.blocks.length}%"></i></div><div class="eyebrow">${esc(kindNames[b.kind] || "PRACTICE")} · ${b.mins} MIN PLANNED</div><h1>${esc(b.title)}</h1><p class="muted">${esc(s.room)} · room booking ends ${clockLabel(s.end)}</p>${!valid ? `<div class="inline-notice warning">${esc(noStartReason(s))} Your work and notes remain available.</div>` : ""}${instructions(b)}<div class="timer-area"><output id="focusTimer" aria-label="Time remaining">${b.mins}:00</output><span id="timerStatus" class="muted">${terminal ? statusNames[b.status] : active ? "Timer running" : paused ? "Paused" : "Ready when you are"}</span></div><div class="focus-actions">${!terminal ? button(active ? "Pause" : paused ? "Resume" : "Start block", `data-action="${active ? "pause" : "start"}" ${(!valid && !active) || busyAction ? "disabled" : ""}`, !active) : ""}${!terminal ? button("Mark complete & next →", `data-action="complete" ${busyAction || !["active", "paused"].includes(b.status) ? "disabled" : ""}`, true) : button("Next block →", "data-focus-next", true)}${!terminal ? button("Skip this block", 'data-action="skip"') : ""}</div>${["playing", "study"].includes(b.kind) ? noteHTML(s, b) : ""}<p class="focus-context">${help(b.why || "The duration fits this room booking.", "Why this task?")} The timer never marks a block complete for you.</p><div id="focusResult" class="inline-status" role="status">${esc(focusActionError)}</div>`;
+    `<div class="focus-top"><button class="text-button" data-focus-close>← Session</button><span>${index + 1} of ${s.blocks.length} blocks</span><button class="icon-button" data-focus-close aria-label="Close focus">×</button></div><div class="focus-progress"><i style="width:${(100 * (index + 1)) / s.blocks.length}%"></i></div><div class="eyebrow">${esc(kindNames[b.kind] || "PRACTICE")} · ${b.mins} MIN PLANNED</div><h1>${esc(b.title)}</h1><p class="muted">${esc(s.room)} · room booking ends ${clockLabel(s.end)}</p>${!valid ? `<div class="inline-notice warning">${esc(noStartReason(s))} Your work and notes remain available.</div>` : ""}${instructions(b)}<div class="timer-area"><output id="focusTimer" aria-label="Time remaining">${b.mins}:00</output><span id="timerStatus" class="muted">${terminal ? statusNames[b.status] : active ? "Timer running" : paused ? "Paused" : "Ready when you are"}</span></div><div class="focus-actions">${!terminal ? button(active ? "Pause" : paused ? "Resume" : "Start block", `data-action="${active ? "pause" : "start"}" ${(!valid && !active) || busyAction ? "disabled" : ""}`, !active) : ""}${!terminal ? button("Mark complete & next →", `data-action="complete" ${busyAction || !["active", "paused"].includes(b.status) ? "disabled" : ""}`, true) : button("Next block →", "data-focus-next", true)}${!terminal ? button("Skip this block", 'data-action="skip"') : ""}</div>${["playing", "study"].includes(b.kind) ? noteHTML(s, b) : ""}<p class="focus-context">${help(b.why || "The duration fits this room booking.", "Why this task?")}</p><div id="focusResult" class="inline-status" role="status">${esc(focusActionError)}</div>`;
   wireNotes($("focusContent"));
   tickTimer();
 }
@@ -690,7 +693,7 @@ function nextFocus() {
     renderFocus();
   } else {
     $("focusContent").innerHTML =
-      `<div class="session-finished"><div class="eyebrow">SESSION RECORDED</div><h1>Leave a useful next step.</h1><p>Your completed blocks and notes are saved. Unfinished work stays unfinished.</p>${button("Debrief with coach →", "data-session-debrief", true)}${button("Back to the week", "data-focus-close")}<p class="muted small">Finishing practice does not cancel your room booking.</p></div>`;
+      `<div class="session-finished"><div class="eyebrow">SESSION RECORDED</div><h1>Leave a useful next step.</h1>${button("Debrief with coach →", "data-session-debrief", true)}${button("Back to the week", "data-focus-close")}</div>`;
     focusRef = null;
   }
 }

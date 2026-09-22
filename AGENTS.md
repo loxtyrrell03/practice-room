@@ -78,3 +78,10 @@ At every coherent verified milestone inspect Git state, commit only relevant fil
 The academic-year reset is committed in the private repository. The backend and deployment checks passed 159 Python tests; the frontend passed 11 contract tests and the gateway routing test. Background refresh must release the refresh button in its finally path.
 
 Deployed 22 September 2026 to the existing MusicPracticeHomeServer gateway on 8790, supervising the planner on 8977. Canonical HTTPS year, session and coach metadata APIs, matching static assets, the legacy score-app /home route, and the connected rendered app were verified. Chrome checks covered desktop and 390-pixel width, actual booking refresh, session/repertoire/settings/help/journal surfaces, previous-programme archives and a composer above the phone navigation. No browser console errors were observed. A synthetic coach runtime request completed successfully; live user messages, notes and timers were not fabricated for QA. Tailscale routes and the En Croissant listener were unchanged. Physical iPhone and on-screen keyboard behaviour remain unverified.
+
+
+## Personal practice workflow refinement - 22 September 2026
+
+The owner wants a quiet personal practice notebook: choose any piece freely, jot passage-specific notes while playing, and have those notes lead automatically to editable/dismissible future work. The plan guides practice rather than restricting it to a booking or timer. Per-piece learning stages and timeline must be immediately clear in Repertoire. A simpler structural redesign is being reviewed before implementation.
+
+Cancelled bookings are hidden from both Today and Week and cannot remain the selected booking, while their stored practice history is retained. Repetitive explanatory footers, empty-allocation jargon and unsolicited empty-day suggestion panels were removed. Twelve frontend contract tests pass, including cancellation visibility and history preservation; the notebook/timeline redesign is still a prototype, not deployed functionality.

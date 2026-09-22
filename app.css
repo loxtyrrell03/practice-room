@@ -2048,3 +2048,5 @@ dialog::backdrop {
     animation: none !important;
   }
 }
+
+#weekSubtitle:empty, .session-detail:empty { display: none; }

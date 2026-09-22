@@ -342,3 +342,23 @@ test('background refresh releases the refresh control after completion',async()=
   assert.equal(run('refreshing'),false);
   assert.equal(run('syncStates.at(-1)'),false);
 });
+
+
+test('cancelled bookings are hidden from both planning views without deleting stored practice',()=>{
+  const {context,run,elements}=fixture();
+  for(const id of ['weekTitle','weekSubtitle','weekMetrics','coverageNote','dayStrip','agendaDate','sessionList','sessionDetail','todayDate','todayContent'])elements[id]={};
+  context.sampleSessions=[{id:'kept',date:'2026-09-22',end:'2026-09-22T20:00:00Z',bookingStatus:'confirmed',blocks:[]},{id:'removed',date:'2026-09-22',end:'2026-09-22T20:00:00Z',bookingStatus:'cancelled',blocks:[{id:'history',done:true}]}];
+  run('sessionsDoc={sessions:sampleSessions,days:[],today:"2026-09-22",sync:{coveredDates:["2026-09-22"]}};selectedDate="2026-09-22";weekStart="2026-09-21";selectedSessionId="removed";renderSync=()=>{};sessionRow=s=>s.id;sessionDetail=s=>s.id;wireNotes=()=>{}');
+  assert.equal(run('currentSession()'),undefined);
+  run('renderWeek();renderToday()');
+  assert.equal(elements.sessionList.innerHTML,'kept');
+  assert.equal(elements.sessionDetail.innerHTML,'kept');
+  assert.doesNotMatch(elements.todayContent.innerHTML,/removed/);
+  assert.equal(context.sampleSessions.length,2);
+  assert.equal(context.sampleSessions[1].blocks[0].done,true);
+  context.sampleSessions.splice(0,1);
+  run('renderWeek();renderToday()');
+  assert.doesNotMatch(elements.sessionList.innerHTML,/removed/);
+  assert.doesNotMatch(elements.todayContent.innerHTML,/removed/);
+  assert.equal(elements.sessionDetail.innerHTML,'');
+});
