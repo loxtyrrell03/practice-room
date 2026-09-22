@@ -50,6 +50,7 @@ EDITABLE_FILES = (
     "data/state.json",
     "data/day-plans.json",
     "data/weekly-plan.json",
+    "data/academic-year.json",
     "data/journal.json",
     "data/spots.json",
     "data/observations.json",

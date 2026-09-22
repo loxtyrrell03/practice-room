@@ -1,0 +1,2 @@
+# IANA time zones are not supplied by Windows Python.
+tzdata

@@ -51,14 +51,15 @@ from repertoire_changes import (
     RepertoireChangeManager,
     render_repertoire_prompt,
 )
+from session_service import SessionService, YEAR, SESSIONS
 
 
 HERE = Path(__file__).resolve().parent
-DATA = HERE / "data-repo"
-PORT = 8977
+DATA = Path(os.environ.get("PRACTICE_DATA_ROOT", str(HERE / "data-repo")))
+PORT = int(os.environ.get("PRACTICE_PORT", "8977"))
 MODEL = os.environ.get("COACH_MODEL", "claude-opus-5")
 CODEX_TIMEOUT_SECONDS = int(os.environ.get("CODEX_TIMEOUT_SECONDS", "1800"))
-PHONE_URL = "https://lox.tail89d19b.ts.net:10000/"
+PHONE_URL = "https://lox-pc.tail89d19b.ts.net:10000/"
 SESSION_FILE = HERE / ".coach-session.json"
 if os.name == "nt":
     HIDDEN_SUBPROCESS_FLAGS = subprocess.CREATE_NEW_CONSOLE
@@ -78,6 +79,15 @@ sync_lock = threading.Lock()
 pipeline_init_lock = threading.Lock()
 observation_pipeline = None
 coach_queue = None
+session_service = None
+
+
+def get_session_service():
+    global session_service
+    with data_lock:
+        if session_service is None:
+            session_service = SessionService(DATA, data_lock)
+        return session_service
 
 
 def _utc_now():
@@ -386,6 +396,17 @@ def safe_path(rel):
     return path
 
 
+READABLE_FILES = {"data/state.json", "data/day-plans.json", "data/weekly-plan.json",
+                  "data/chat.json", "data/journal.json", "data/spots.json",
+                  OBSERVATIONS_REL, YEAR, SESSIONS, "memory/MEMORY.md",
+                  "context/plan.md", "context/research.md", "context/prescriptions.md",
+                  "context/repertoire.md"}
+
+
+def canonical_rel(rel):
+    return safe_path(rel).relative_to(DATA.resolve()).as_posix()
+
+
 def get_observation_pipeline():
     global observation_pipeline
     if observation_pipeline is None:
@@ -441,7 +462,9 @@ def run_claude(
     effort="medium",
 ):
     """Run one CLI turn. Transaction ordering is owned by the caller."""
-    claude = shutil.which("claude") or "claude"
+    claude = shutil.which("claude")
+    if not claude:
+        raise PermanentCoachError("Claude CLI is not installed", "**Claude is unavailable on this PC.** Select an available OpenAI coach model and resend. Your message is saved.")
     model = model or MODEL
     base = [
         claude,
@@ -558,7 +581,9 @@ def run_codex(
     effort="high",
 ):
     """Run a fresh Codex turn inside the isolated coach transaction stage."""
-    codex = shutil.which("codex") or "codex"
+    codex = shutil.which("codex")
+    if not codex:
+        raise PermanentCoachError("Codex CLI is not installed", "**The coach runtime is unavailable on this PC.** Your message is saved; restore the selected runtime before resending.")
     coach_prompt = f"""PRACTICE ROOM CODEX RUNTIME
 
 This is an execution task, not a request to acknowledge or summarize instructions.
@@ -787,6 +812,21 @@ def queue_completed(job_id):
 
 
 class Handler(SimpleHTTPRequestHandler):
+    def parse_request(self):
+        if not super().parse_request():
+            return False
+        host = urlparse("//" + self.headers.get("Host", "")).hostname
+        if host not in {"localhost", "127.0.0.1", "lox-pc.tail89d19b.ts.net"}:
+            self.send_error(403, "untrusted host")
+            return False
+        return True
+
+    def do_HEAD(self):
+        if urlparse(self.path).path not in {"/", "/index.html", "/app.css", "/app.js", "/manifest.webmanifest", "/icon.svg", "/sw.js", "/icon-192.png", "/icon-512.png", "/apple-touch-icon.png"}:
+            self.send_error(404)
+            return
+        super().do_HEAD()
+
     def end_headers(self):
         # The phone commonly keeps this app open for days. Never let an old
         # shell or asset survive a deploy after the cache-busting version moves.
@@ -810,6 +850,12 @@ class Handler(SimpleHTTPRequestHandler):
 
     def do_GET(self):
         url = urlparse(self.path)
+        if url.path == "/api/health":
+            return self._json(200, {"ok": True, "app": "practice-room", "version": "academic-year-1"})
+        if url.path == "/api/year":
+            return self._json(200, get_session_service().year())
+        if url.path == "/api/sessions":
+            return self._json(200, get_session_service().get())
         if url.path == "/api/meta":
             ok, name = git(DATA, "config", "user.name")
             practice_logs = get_observation_pipeline().summary()
@@ -828,7 +874,7 @@ class Handler(SimpleHTTPRequestHandler):
                     "coachRunning": bool(queue["processing"] or log_processing),
                     "coachQueue": queue,
                     "coachActivity": coach_activity.snapshot(),
-                    "coachModels": public_catalog(),
+                    "coachModels": [{**model, "available": bool(shutil.which("codex" if model["provider"] == "openai" else "claude"))} for model in public_catalog()],
                     "defaultCoachSelection": DEFAULT_SELECTION,
                     "practiceLogs": practice_logs,
                 },
@@ -836,6 +882,9 @@ class Handler(SimpleHTTPRequestHandler):
         if url.path == "/api/file":
             rel = parse_qs(url.query).get("path", [""])[0]
             try:
+                rel = canonical_rel(rel)
+                if rel not in READABLE_FILES:
+                    raise ValueError("file is not available to the app")
                 with data_lock:
                     content = safe_path(rel).read_text(encoding="utf-8")
                 return self._json(200, {"content": content})
@@ -849,23 +898,55 @@ class Handler(SimpleHTTPRequestHandler):
             self.send_header("Cache-Control", "no-store")
             self.end_headers()
             return
+        # Personal data lives behind the explicit API; never expose the data
+        # symlink, Python sources, Git metadata or directory listings as assets.
+        static = {"/", "/index.html", "/app.css", "/app.js", "/manifest.webmanifest", "/icon.svg", "/sw.js", "/icon-192.png", "/icon-512.png", "/apple-touch-icon.png"}
+        if url.path not in static:
+            return self._json(404, {"error": "not found"})
         return super().do_GET()
 
     def do_POST(self):
         url = urlparse(self.path)
+        origin = self.headers.get("Origin")
+        allowed_origins = {PHONE_URL.rstrip("/"), f"http://localhost:{PORT}", f"http://127.0.0.1:{PORT}"}
+        if origin and origin not in allowed_origins:
+            return self._json(403, {"error": "untrusted origin"})
         try:
             length = int(self.headers.get("Content-Length", 0))
+            if not 0 <= length <= 2_000_000:
+                return self._json(413, {"error": "request too large"})
             payload = json.loads(self.rfile.read(length) or b"{}")
+            if not isinstance(payload, dict):
+                raise ValueError("expected object")
         except Exception:
             return self._json(400, {"error": "bad json"})
 
+        if url.path == "/api/sessions/refresh":
+            get_session_service().request_refresh()
+            return self._json(202, {"ok": True, "status": "refreshing"})
+        if url.path in {"/api/sessions/action", "/api/sessions/adjust", "/api/preferences"}:
+            try:
+                service = get_session_service()
+                operation = {"/api/sessions/action": service.action,
+                             "/api/sessions/adjust": service.adjust,
+                             "/api/preferences": service.preferences}[url.path]
+                return self._json(200, operation(payload))
+            except (ValueError, TypeError) as exc:
+                return self._json(400, {"error": str(exc)})
+            except Exception as exc:
+                log(f"session operation failed: {exc}")
+                return self._json(500, {"error": "The request could not finish. Refresh to check what was saved before retrying."})
+
         if url.path == "/api/file":
             try:
-                rel = payload["path"]
-                if rel in {OBSERVATIONS_REL, JOBS_REL, LEDGER_REL}:
+                rel = canonical_rel(payload["path"])
+                if rel in {OBSERVATIONS_REL, JOBS_REL, LEDGER_REL, YEAR, SESSIONS, "data/asimut-bookings.json"}:
                     return self._json(
                         409, {"error": "that file is owned by a durable server workflow"}
                     )
+                if rel not in {"data/state.json", "data/day-plans.json"}:
+                    return self._json(409, {"error": "use the dedicated workflow to change this file"})
+                json.loads(payload["content"])
                 with data_lock:
                     atomic_write_text(safe_path(rel), payload["content"])
                 return self._json(200, {"ok": True})
@@ -944,9 +1025,10 @@ def main():
     if not DATA.exists():
         log("data-repo/ is missing - clone practice-room-data into it first.")
         return
-    log("pulling latest...")
-    git(HERE, "pull", "--rebase")
-    git(DATA, "pull", "--rebase")
+    if not os.environ.get("PRACTICE_SKIP_GIT_PULL"):
+        log("pulling latest...")
+        git(HERE, "pull", "--rebase")
+        git(DATA, "pull", "--rebase")
 
     pipeline = get_observation_pipeline()
     pipeline.migrate()
@@ -962,6 +1044,7 @@ def main():
     if recovered["recovered"]:
         log(f"recovered practice-log batches: {', '.join(recovered['recovered'])}")
     coach_queue.start()
+    get_session_service().start()
     threading.Thread(target=background_loop, daemon=True).start()
     log(f"daily practice-log batch -> {pipeline.daily_time_text} Europe/London")
     log(f"Practice Room -> http://localhost:{PORT}")

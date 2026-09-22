@@ -152,11 +152,11 @@ class CoachQueueTests(unittest.TestCase):
         self.assertEqual("coach", reply["role"])
         self.assertEqual(selection, reply["selection"])
 
-    def test_default_selection_is_opus_medium(self):
+    def test_default_selection_is_terra_medium(self):
         self.assertEqual(
             {
-                "provider": "anthropic",
-                "model": "claude-opus-5",
+                "provider": "openai",
+                "model": "gpt-5.6-terra",
                 "effort": "medium",
             },
             DEFAULT_SELECTION,

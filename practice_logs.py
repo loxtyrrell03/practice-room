@@ -42,6 +42,10 @@ COACH_OUTPUTS = (
     "data/journal.json",
     "data/spots.json",
     "memory/MEMORY.md",
+    "data/academic-year.json",
+    "data/weekly-plan.json",
+    "context/plan.md",
+    "context/repertoire.md",
 )
 JSON_OUTPUTS = {
     "data/chat.json",
@@ -50,6 +54,7 @@ JSON_OUTPUTS = {
     "data/journal.json",
     "data/spots.json",
 }
+OPTIONAL_JSON_OUTPUTS = {"data/academic-year.json", "data/weekly-plan.json"}
 DAILY_STATE_PIECE_FIELDS = {
     "security",
     "tempoPct",
@@ -735,8 +740,16 @@ class ObservationPipeline:
         targets = DAILY_OUTPUTS if batch["source"] == "daily" else COACH_OUTPUTS
         for rel in targets:
             text = read_text(stage / rel, "")
-            if rel in JSON_OUTPUTS:
+            if rel in JSON_OUTPUTS or (rel in OPTIONAL_JSON_OUTPUTS and text):
                 validate_json_text(rel, text)
+        # Keep the year/scheduler contract valid before a coach transaction can
+        # commit it. Import lazily because SessionService uses our atomic writer.
+        from session_service import validate_academic_year, validate_planning_state
+        staged_state = json.loads(read_text(stage / "data/state.json"))
+        validate_planning_state(staged_state)
+        year_text = read_text(stage / "data/academic-year.json", "")
+        if year_text:
+            validate_academic_year(json.loads(year_text), staged_state)
 
     def _merge_daily_state(self, current_text: str, staged_text: str) -> str:
         current = json.loads(current_text)
@@ -786,7 +799,7 @@ class ObservationPipeline:
                     if current_text != base_text:
                         raise TransactionConflict(f"{rel} changed during the coach run")
                     output_text = staged_text
-                if rel in JSON_OUTPUTS:
+                if rel in JSON_OUTPUTS or (rel in OPTIONAL_JSON_OUTPUTS and output_text):
                     validate_json_text(rel, output_text)
                 if output_text != current_text:
                     outputs[rel] = output_text

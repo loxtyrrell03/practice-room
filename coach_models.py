@@ -73,8 +73,8 @@ MODEL_CATALOG = (
 )
 
 DEFAULT_SELECTION = {
-    "provider": "anthropic",
-    "model": "claude-opus-5",
+    "provider": "openai",
+    "model": "gpt-5.6-terra",
     "effort": "medium",
 }
 
