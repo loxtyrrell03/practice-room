@@ -30,8 +30,10 @@ def pressure(days, importance):
     Take the strongest applicable event, never sum repeated performances.
     Existing workload weights still determine how much material needs learning.
     """
-    base, boost = {"low": (.8, 1.1), "medium": (1., 2.2), "high": (1.3, 3.7)}[importance]
-    return base + boost * (60 / (max(0, days) + 60)) ** 1.5
+    # Importance scales the approaching deadline, rather than adding a
+    # permanent advantage that can swamp a substantially earlier assessment.
+    boost = {"low": 1., "medium": 2.5, "high": 3.5}[importance]
+    return 1 + boost * (90 / (max(0, days) + 90)) ** 2
 
 
 def update_performance(academic, change):

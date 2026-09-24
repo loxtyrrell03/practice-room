@@ -16,6 +16,20 @@ def weights(events, now=NOW, state=STATE):
 
 
 class PerformanceAllocationTests(unittest.TestCase):
+    def test_nearer_assessment_gets_more_attention_now_than_later_major_recital(self):
+        assessment = event("assessment", date=None, month="2027-02", status="provisional")
+        recital = event("recital", pieceIds=["b"], date=None, month="2027-05", status="provisional", priority="high")
+        for elapsed in (0, 30, 70, 110):
+            with self.subTest(elapsed=elapsed):
+                near, later = weights([assessment, recital], NOW + timedelta(days=elapsed))
+                self.assertGreater(near, later)
+        # Check the resulting practice time, not just a priority label or score.
+        reservations = [booking(i, '09:00', '15:00', f'2026-09-{22+i}') for i in range(3)]
+        source = snapshot(reservations, covered=['2026-09-22','2026-09-23','2026-09-24'])
+        plan = reconcile(source, STATE, {**ACADEMIC, "deadlines":[assessment,recital]}, now=NOW)
+        totals = {p:sum(b['mins'] for b in blocks(plan) if b.get('pieceId')==p) for p in ('a','b')}
+        self.assertGreater(totals['a'], totals['b'])
+
     def test_importance_and_proximity_both_matter(self):
         low, medium, high = [weights([event(priority=p)])[0] for p in ("low", "medium", "high")]
         unspecified = event()

@@ -239,6 +239,7 @@ test("provisional months and shared deadlines are rendered from data", () => {
   const { run } = fixture();
   assert.equal(run('performancePriority({})'), "medium");
   assert.equal(run('performancePriority({priority:"high"})'), "high");
+  assert.equal(run('priorityLabel({priority:"high"})'), "High importance");
   assert.equal(run('monthLabel("2027-10")'), "October 2027");
   run(
     'academic.deadlines=[{id:"first",month:"2027-02",pieceIds:["p"]},{id:"final",month:"2027-05",pieceIds:["p"]}]',
@@ -462,6 +463,8 @@ test('removed dates stay out of repertoire filters and remain restorable',()=>{
   assert.match(elements.pieceFilters.innerHTML,/Oct 2027/);
   assert.doesNotMatch(elements.pieceFilters.innerHTML,/2027-12/);
   assert.doesNotMatch(elements.deadlineOverview.innerHTML,/Removed recital/);
+  assert.match(elements.deadlineOverview.innerHTML,/Next deadline/);
+  assert.doesNotMatch(elements.deadlineOverview.innerHTML,/Medium importance|priority/);
 });
 
 test('a performance save refresh waits out an earlier poll then reads the new state',async()=>{

@@ -153,7 +153,7 @@ function stageDate(s) {
   return `${dateLabel(s.startDate,opts)} – ${dateLabel(s.endDate,opts)}`;
 }
 function performancePriority(d) { return d.priority || "medium"; }
-function priorityLabel(d) { const p = performancePriority(d); return p[0].toUpperCase()+p.slice(1)+" priority"; }
+function priorityLabel(d) { const p = performancePriority(d); return p[0].toUpperCase()+p.slice(1)+" importance"; }
 function performanceDate(d) { return d.date ? dateLabel(d.date,{day:"numeric",month:"short",year:"numeric"}) : monthLabel(d.month)+" · date to confirm"; }
 function performancePast(d) { return d.date ? d.date < ukDate() : d.month < ukDate().slice(0,7); }
 function sortedPerformances(rows) { return [...rows].sort((a,b) => (a.date || a.month+"-01").localeCompare(b.date || b.month+"-01")); }
@@ -249,7 +249,7 @@ function renderTimeline() {
   const filters = [...new Set(ds.map(d => d.month))];
   if (pieceFilter !== "all" && !filters.includes(pieceFilter)) pieceFilter = "all";
   if ($("pieceFilters")) $("pieceFilters").innerHTML = [{id:"all",name:"All works"},...filters.map(m => ({id:m,name:dateLabel(m+"-01",{month:"short",year:"numeric"})}))].map(f => `<button class="chip ${pieceFilter === f.id ? "active" : ""}" data-filter="${esc(f.id)}">${esc(f.name)}</button>`).join("");
-  $("deadlineOverview").innerHTML = ds.filter(d => !performancePast(d)).slice(0,3).map(d => `<button class="deadline-link" data-performance-edit="${esc(d.id)}"><span>${esc(deadlineName(d))}</span><strong>${esc(performanceDate(d))}</strong><small>${esc(priorityLabel(d))}</small></button>`).join("") + '<button class="text-button" data-open-performances>All performances &amp; deadlines</button>';
+  $("deadlineOverview").innerHTML = ds.filter(d => !performancePast(d)).slice(0,3).map((d,i) => `<button class="deadline-link" data-performance-edit="${esc(d.id)}"><span>${esc(deadlineName(d))}</span><strong>${esc(performanceDate(d))}</strong>${i === 0 ? '<small>Next deadline</small>' : ""}</button>`).join("") + '<button class="text-button" data-open-performances>All performances &amp; deadlines</button>';
   const routes = (notebook.routes || []).filter(r => pieceFilter === "all" || r.deadlineMonth === pieceFilter);
   const pieces = activePieces().filter(p => routes.some(r => r.pieceId === p.id) || pieceFilter === "all");
   const monthHead = `<div class="timeline-header"><span>Piece / preparation stage</span><div class="month-grid" style="--months:${months.length}">${months.map(m => `<span>${esc(dateLabel(m+"-01",{month:"short"}))}</span>`).join("")}</div></div>`;
