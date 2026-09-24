@@ -127,3 +127,6 @@ Performance dates are deployed on 24 September 2026 at the unchanged canonical H
 ### Importance correction - 24 September 2026
 
 The blanket high default was misleading and is removed across backend, validation, legacy fallback and frontend. Performance importance defaults to medium; high is explicit. Repertoire no longer repeats a high/medium label beside every piece: it belongs to the event in the overview/editor, while actual practice shares also use workload, date proximity and recent work. Live assessment importance was assigned explicitly through revision-checked preferences, without changing dates, scope or practice history. Asset version 41 contains this correction.
+
+
+Version 41 is deployed and verified in the connected canonical HTTPS app: the overview shows differentiated event importance and repertoire rows omit repeated priority labels. The correction passed 61 focused Python checks, 20 frontend checks and the gateway test; serving identity and all Tailscale routes were preserved.
