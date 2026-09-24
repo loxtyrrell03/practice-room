@@ -119,3 +119,6 @@ Repertoire offers Dates beside every piece and All performances & deadlines abov
 
 
 Before deployment, 177 Python tests, 20 frontend contract tests and the gateway test pass. Synthetic connected Chrome checks verified per-piece create, movement scope, importance and exact/month editing, removal and restoration, reload persistence, and 390px editor/help/timeline layouts. No test dates were written to live repertoire. Source uses asset version 40; the coordinated live deployment is recorded separately after verification.
+
+
+Performance dates are deployed on 24 September 2026 at the unchanged canonical HTTPS route, asset version 40. Source and serving assets match. Connected Chrome verified real repertoire (including a piece with two scoped windows), the date manager, editor and settings entry on desktop and a tab-specific 390px viewport without horizontal overflow or browser console errors. Canonical year/notebook/session APIs returned real data; live performance records and notes were not fabricated. The legacy score route, Tailscale configuration and En Croissant listener were preserved. The isolated preview process was stopped. Physical iPhone and its on-screen keyboard remain unverified.
