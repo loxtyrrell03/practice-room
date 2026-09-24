@@ -12,6 +12,7 @@ from academic_sessions import UK, apply_action, overview, reconcile
 from asimut_bookings import BookingImporter
 from practice_logs import atomic_write_json
 from practice_notebook import PracticeNotebook, preparation_routes
+from performance_deadlines import update_performance
 
 YEAR = "data/academic-year.json"
 SESSIONS = "data/sessions.json"
@@ -54,6 +55,14 @@ def validate_academic_year(academic, state=None):
         if not isinstance(deadline, dict) or not isinstance(deadline.get("id"), str) or not deadline["id"].strip() or deadline["id"] in seen:
             raise ValueError("Every deadline needs a unique identity.")
         seen.add(deadline["id"])
+        if not isinstance(deadline.get("label"), str) or not deadline["label"].strip() or len(deadline["label"]) > 120:
+            raise ValueError("A performance needs a name, up to 120 characters.")
+        if deadline.get("priority", "high") not in {"low", "medium", "high"}:
+            raise ValueError("Choose low, medium or high importance.")
+        if type(deadline.get("revision", 0)) is not int or deadline.get("revision", 0) < 0:
+            raise ValueError("Invalid performance revision.")
+        if type(deadline.get("archived", False)) is not bool:
+            raise ValueError("Invalid performance archive state.")
         _month(deadline.get("month"), "Deadline month")
         exact = deadline.get("date")
         if exact is not None:
@@ -63,7 +72,7 @@ def validate_academic_year(academic, state=None):
         if deadline.get("status") != ("confirmed" if exact else "provisional"):
             raise ValueError("An unknown date is provisional; an exact date is confirmed.")
         piece_ids = deadline.get("pieceIds")
-        if not isinstance(piece_ids, list) or any(not isinstance(pid, str) or not pid for pid in piece_ids) or len(set(piece_ids)) != len(piece_ids):
+        if not isinstance(piece_ids, list) or not piece_ids or any(not isinstance(pid, str) or not pid for pid in piece_ids) or len(set(piece_ids)) != len(piece_ids):
             raise ValueError("Deadline pieces must be distinct piece identities.")
         if known_pieces is not None and not set(piece_ids) <= known_pieces:
             raise ValueError("A deadline refers to a piece outside the active programme.")
@@ -71,7 +80,7 @@ def validate_academic_year(academic, state=None):
         if not isinstance(scope, dict) or not set(scope) <= set(piece_ids):
             raise ValueError("Deadline movement scope must refer to its pieces.")
         for pid, movement_ids in scope.items():
-            if not isinstance(movement_ids, list) or any(not isinstance(mid, str) or not mid for mid in movement_ids) or len(set(movement_ids)) != len(movement_ids):
+            if not isinstance(movement_ids, list) or not movement_ids or any(not isinstance(mid, str) or not mid for mid in movement_ids) or len(set(movement_ids)) != len(movement_ids):
                 raise ValueError("Deadline movement identities must be distinct.")
             if state is not None:
                 piece = next(p for p in state["pieces"] if p.get("id") == pid)
@@ -248,6 +257,8 @@ class SessionService:
     def preferences(self, payload):
         with self.lock:
             academic = self.year()
+            if "performance" in payload:
+                update_performance(academic, payload["performance"])
             target = payload.get("dailyTargetMinutes")
             if target is not None:
                 if not isinstance(target, dict) or any(type(target.get(k)) is not int for k in ("min", "max")) or not 0 <= target["min"] <= target["max"] <= 600:
@@ -263,9 +274,16 @@ class SessionService:
                     item = next((d for d in academic.get("deadlines", []) if d["id"] == update.get("id")), None)
                     if not item:
                         raise ValueError("Unknown deadline.")
+                    if "revision" in update and update["revision"] != item.get("revision", 0):
+                        raise ValueError("This performance changed on another device. Reopen settings before saving.")
+                    if item.get("archived"):
+                        raise ValueError("This performance was removed. Reopen settings before saving.")
                     value = update.get("date")
                     if value is not None:
                         _calendar_date(value, "Assessment date")
+                    item["revision"] = item.get("revision", 0) + 1
+                    item.pop("lastRequestId", None)
+                    item.pop("lastRequestSignature", None)
                     item["date"] = value
                     item["status"] = "confirmed" if value else "provisional"
                     if value:

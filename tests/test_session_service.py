@@ -238,6 +238,58 @@ class SessionServiceTests(ServiceFixture):
         blocks = [b for s in after["sessions"] for b in s["blocks"] if b.get("pieceId") == "near"]
         self.assertTrue(all("Listen for the returning bass" in json.dumps(b["steps"]) for b in blocks))
 
+    def performance(self, **fields):
+        return {"id": "class", "revision": 0, "requestId": "create-class", "label": "Performance class",
+                "date": "2026-10-02", "month": "2026-10", "priority": "medium",
+                "pieceIds": ["later"], "movementIdsByPiece": {}, **fields}
+
+    def test_performance_crud_is_durable_scoped_and_retry_safe(self):
+        original = self.read("data/state.json")
+        change = self.performance()
+        year = self.service.preferences({"performance": change})
+        event = next(d for d in year["deadlines"] if d["id"] == "class")
+        self.assertEqual(1, event["revision"])
+        self.assertEqual(year, self.service.preferences({"performance": change}))
+        with self.assertRaises(ValueError):
+            self.service.preferences({"performance": {**change, "label": "Changed retry"}})
+        restarted = SessionService(self.root, importer=Importer())
+        self.assertEqual(year, restarted.year())
+        routes = session_service.PracticeNotebook(self.root, restarted.lock).get()["routes"]
+        self.assertTrue(any(r["deadlineId"] == "class" and r["pieceId"] == "later" for r in routes))
+        updated = self.performance(revision=1, requestId="edit-class", priority="high", pieceIds=["near"],
+                                   movementIdsByPiece={"near": ["mvt-1"]}, date=None, month="2027-03")
+        year = restarted.preferences({"performance": updated})
+        event = year["deadlines"][-1]
+        self.assertEqual("provisional", event["status"])
+        self.assertEqual(original, self.read("data/state.json"))
+        with self.assertRaises(ValueError):
+            restarted.preferences({"performance": self.performance(requestId="stale-edit")})
+        removed = {"id":"class", "revision":2, "requestId":"remove", "action":"archive"}
+        restarted.preferences({"performance": removed})
+        restarted.preferences({"performance": removed})
+        self.assertFalse(any(r["deadlineId"] == "class" for r in session_service.PracticeNotebook(self.root, restarted.lock).get()["routes"]))
+        restarted.preferences({"performance":{"id":"class","revision":3,"requestId":"restore","action":"restore"}})
+        self.assertTrue(any(r["deadlineId"] == "class" for r in session_service.PracticeNotebook(self.root, restarted.lock).get()["routes"]))
+
+    def test_invalid_performance_never_partially_writes(self):
+        before = self.read(YEAR)
+        for fields in ({"priority":"urgent"}, {"label":""}, {"pieceIds":[]}, {"pieceIds":["missing"]},
+                       {"date":"2026-02-30"}, {"date":None,"month":"2026-13"}, {"revision":True},
+                       {"movementIdsByPiece":{"later":["missing"]}}, {"movementIdsByPiece":{"later":[]}}):
+            with self.subTest(fields=fields), self.assertRaises(ValueError):
+                self.service.preferences({"performance": self.performance(**fields), "dailyTargetMinutes":{"min":60,"max":120}})
+            self.assertEqual(before, self.read(YEAR))
+
+    def test_performance_priority_changes_allocated_minutes_and_preserves_history(self):
+        def minutes(doc):
+            return sum(b["mins"] for s in doc["sessions"] for b in s["blocks"]
+                       if b.get("pieceId") == "later" and b["status"] == "planned")
+        before = self.service.get()
+        self.service.preferences({"performance":self.performance(priority="high")})
+        after = self.service.get()
+        self.assertGreater(minutes(after), minutes(before))
+        self.assertEqual(before["sessions"][0]["bookingStatus"], after["sessions"][0]["bookingStatus"])
+
     def test_exact_deadline_changes_urgency_without_rewriting_coach_fields(self):
         before = self.service.get()
         self.service.preferences({"deadlines": [{"id": "february", "date": "2026-10-02"}]})

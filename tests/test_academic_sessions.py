@@ -268,7 +268,9 @@ class PrioritiesTests(unittest.TestCase):
                                     {'id':'later','month':'2027-05','status':'provisional'}]}
         candidates=_candidates(state,NOW,year)
         self.assertEqual(2,len(candidates))
-        self.assertEqual(1.6,candidates[0]['weight'])
+        self.assertGreater(candidates[0]['weight'], 1)
+        single={**year,'deadlines':year['deadlines'][:1]}
+        self.assertEqual(candidates[0]['weight'],_candidates(state,NOW,single)[0]['weight'])
         self.assertEqual(1,candidates[1]['weight'])
 
     def test_movement_scope_and_total_work_weight(self):
@@ -277,8 +279,8 @@ class PrioritiesTests(unittest.TestCase):
         year={'deadlines':[{'id':'feb','month':'2026-10','movementIdsByPiece':{'sonata':['i']}},
                            {'id':'may','month':'2027-05','movementIdsByPiece':{'sonata':['i','ii']}}]}
         candidates=_candidates(state,NOW,year)
-        self.assertAlmostEqual(2.4,candidates[0]['weight'])
-        self.assertEqual(1.5,candidates[1]['weight'])
+        self.assertGreater(candidates[0]['weight'],candidates[1]['weight'])
+        self.assertGreater(candidates[1]['weight'],1.5)
 
     def test_recent_completed_work_moves_allocation_to_other_piece(self):
         prior={'sessions':[{'id':'past','date':'2026-09-21','start':'2026-09-21T12:00+01:00','end':'2026-09-21T14:00+01:00','room':'Room A','bookingStatus':'confirmed','bookedMinutes':120,

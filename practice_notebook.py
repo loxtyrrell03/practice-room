@@ -15,6 +15,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from practice_logs import atomic_write_json
+from performance_deadlines import priority
 
 NOTEBOOK = "data/notebook.json"
 UK = ZoneInfo("Europe/London")
@@ -51,16 +52,15 @@ def preparation_routes(state, academic, overrides=None):
     for piece in state.get("pieces", []):
         if piece.get("active") is False or piece.get("status") == "retired":
             continue
-        due = [d for d in academic.get("deadlines", []) if piece["id"] in d.get("pieceIds", [])]
-        for deadline in due:
+        due = [d for d in academic.get("deadlines", []) if not d.get("archived") and piece["id"] in d.get("pieceIds", [])]
+        for deadline in sorted(due, key=lambda d: d.get("date") or d["month"] + "-01"):
             target = date.fromisoformat(deadline.get("date") or deadline["month"] + "-01")
             # Unknown exact dates keep a whole-month performance window.
             finish = target if deadline.get("date") else month_at(target, 1) - timedelta(days=1)
-            months = max(0, (target.year-start.year)*12 + target.month-start.month)
-            first = max(1, round(months * .5))
-            second = max(first+1, months-1)
-            bounds = [start, max(start, month_at(start, min(first, months))),
-                      max(start, month_at(start, min(second, months))), max(start, target), max(start, finish)]
+            begin = min(start, target)
+            span = (target - begin).days
+            bounds = [begin, begin + timedelta(days=round(span * .5)),
+                      begin + timedelta(days=round(span * .8)), target, finish]
             scope = deadline.get("movementIdsByPiece", {}).get(piece["id"])
             movements = [m for m in piece.get("movements", []) if scope is None or m["id"] in scope]
             plan = piece.get("planning") or {}
@@ -89,6 +89,7 @@ def preparation_routes(state, academic, overrides=None):
             routes.append({"id": f"{piece['id']}:{deadline['id']}", "pieceId": piece["id"],
                            "title": piece.get("short") or piece["title"], "deadlineId": deadline["id"],
                            "deadlineDate": deadline.get("date"), "deadlineMonth": deadline["month"],
+                           "deadlineLabel": deadline.get("label", "Performance"), "priority": priority(deadline),
                            "scope": ", ".join(m["title"].split(". ")[0] for m in movements) if scope else "",
                            "stages": stages})
     return routes

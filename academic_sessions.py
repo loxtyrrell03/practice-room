@@ -11,6 +11,7 @@ import json
 import math
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
+from performance_deadlines import applies, pressure, priority
 
 UK = ZoneInfo("Europe/London")
 VERSION = 1
@@ -57,12 +58,8 @@ def _candidates(state, now, academic=None):
             mp = movement.get("planning") or {}
             weight = base * _weight(mp.get("weight")) / total_weight
             windows = []
-            for did in movement.get('deadlineIds', piece.get('deadlineIds', [])):
-                deadline = deadlines.get(did)
-                if not deadline:
-                    continue
-                scopes = deadline.get('movementIdsByPiece', {})
-                if piece['id'] in scopes and movement.get('id') not in scopes[piece['id']]:
+            for deadline in deadlines.values():
+                if not applies(deadline, piece, movement):
                     continue
                 if deadline.get('date') and deadline.get('status') == 'confirmed':
                     target = instant(deadline['date']+'T00:00:00')
@@ -72,17 +69,16 @@ def _candidates(state, now, academic=None):
                     expiry = (target.replace(day=28)+timedelta(days=4)).replace(day=1)
                 else:
                     continue
-                windows.append((target, expiry))
-            if not windows:
+                windows.append((target, expiry, priority(deadline)))
+            if not windows and "deadlines" not in (academic or {}):
                 month = mp.get("deadlineMonth") or plan.get("deadlineMonth")
                 if month:
                     target = instant(month+'-01T00:00:00')
-                    windows = [(target, (target.replace(day=28)+timedelta(days=4)).replace(day=1))]
-            future = [target for target, expiry in windows if expiry > now]
+                    windows = [(target, (target.replace(day=28)+timedelta(days=4)).replace(day=1), "high")]
+            future = [(target, importance) for target, expiry, importance in windows if expiry > now]
             if future:
-                days = max(0, (min(future)-now).days)
-                if 0 <= days < 90:
-                    weight *= 1.6
+                weight *= max(pressure((target.date()-now.date()).days, importance)
+                              for target, importance in future)
             elif windows:
                 # A passed assessment does not imply completion. Keep a single
                 # maintenance identity until the pianist confirms retirement.
@@ -120,7 +116,7 @@ def _block(booking, index, kind, title, mins, cursor, item=None, spot=None):
         block.update(pieceId=item["piece"]["id"], movementId=item["movement"].get("id"),
                      movement=item["movement"].get("title") or None,
                      steps=_steps(item, mins, spot),
-                     why="Balanced across booked time, near deadlines, movement coverage and recent practice. The duration is a planning choice, not a proven learning optimum.")
+                     why="Balanced across booked time, performance importance and dates, movement coverage and recent practice. The duration is a planning choice, not a proven learning optimum.")
     else:
         messages = {"break": "Leave the keyboard; relax your hands, move and rest. Resume only if comfortable.",
                     "setup": "Settle into the room and warm up gently. Stop playing if pain or altered sensation appears.",
@@ -249,17 +245,6 @@ def reconcile(snapshot, state, academic, previous=None, spots=None, *, now=None,
             elif sid not in by_key and not past:
                 prior.update(bookingStatus="cancelled", notice="No longer in the complete agenda. Completed and started work is preserved.")
             sessions.append(_summary(prior))
-    for item in candidates:
-        last = last_done.get(item["key"])
-        if last:
-            item["weight"] *= 1+min(.5, max(0, (now-last).days-2)*.1)
-        matches = [b for b in state.get("blocks", []) if b.get("pieceId") == item["piece"]["id"] and
-                   b.get("movementId") == item["movement"].get("id") and b.get("steps")]
-        if matches:
-            item["coachSteps"] = matches[-1]["steps"]
-    weight_total = sum(item['weight'] for item in candidates)
-    for item in candidates:
-        item['allocationWeight'] = item['weight']/weight_total
     cuts = [(booking_time(c), booking_time(c, True)) for c in snapshot.get("conflicts", [])]
     claimed, last_item = [], None
     limits = academic.get("sessionLimits") or {}
@@ -269,6 +254,19 @@ def reconcile(snapshot, state, academic, previous=None, spots=None, *, now=None,
         start, end = booking_time(booking), booking_time(booking, True)
         if end <= now or booking["date"] not in covered:
             continue
+        # Evaluate urgency for the day being planned, including passed events.
+        candidates = _candidates(state, max(now, start), academic)
+        for item in candidates:
+            last = last_done.get(item["key"])
+            if last:
+                item["weight"] *= 1+min(.5, max(0, (now-last).days-2)*.1)
+            matches = [b for b in state.get("blocks", []) if b.get("pieceId") == item["piece"]["id"] and
+                       b.get("movementId") == item["movement"].get("id") and b.get("steps")]
+            if matches:
+                item["coachSteps"] = matches[-1]["steps"]
+        weight_total = sum(item['weight'] for item in candidates)
+        for item in candidates:
+            item['allocationWeight'] = item['weight']/weight_total
         prior = old.get(sid) or {}
         blocks = prior.get("blocks", [])
         max_active = max(0, int((academic.get("dailyOverrides") or {}).get(booking["date"], {}).get("maxMinutes", default_cap)))
