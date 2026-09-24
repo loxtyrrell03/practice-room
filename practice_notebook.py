@@ -59,8 +59,16 @@ def preparation_routes(state, academic, overrides=None):
             finish = target if deadline.get("date") else month_at(target, 1) - timedelta(days=1)
             begin = min(start, target)
             span = (target - begin).days
-            bounds = [begin, begin + timedelta(days=round(span * .5)),
-                      begin + timedelta(days=round(span * .8)), target, finish]
+            if span >= 90:
+                # Keep the established month-aligned overview for long plans.
+                months = (target.year-begin.year)*12 + target.month-begin.month
+                first = max(1, round(months * .5))
+                second = max(first+1, months-1)
+                bounds = [begin, max(begin, month_at(begin, min(first, months))),
+                          max(begin, month_at(begin, min(second, months))), target, finish]
+            else:
+                bounds = [begin, begin + timedelta(days=round(span * .5)),
+                          begin + timedelta(days=round(span * .8)), target, finish]
             scope = deadline.get("movementIdsByPiece", {}).get(piece["id"])
             movements = [m for m in piece.get("movements", []) if scope is None or m["id"] in scope]
             plan = piece.get("planning") or {}

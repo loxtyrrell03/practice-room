@@ -2236,3 +2236,38 @@ textarea::placeholder, input::placeholder { color: #748091; opacity: 1; }
   .sync-tools { align-items: flex-start; margin-top: 15px; }
   .coach-open main { height: calc(100dvh - 130px - env(safe-area-inset-bottom)); }
 }
+
+/* Performance dates share the approved quiet repertoire interface. */
+.piece-actions { display: flex; gap: 18px; flex: none; }
+.performance-lane-title { text-align: left; font-size: .8rem; font-weight: 600; padding: 0; white-space: normal; }
+.performance-dialog { max-height: calc(100dvh - 40px); overflow-y: auto; }
+.performance-dialog h2 { font-size: 1.1rem; }
+.performance-dialog #performanceInputs { border: 0; padding: 0; margin: 0; min-width: 0; }
+.performance-dialog .field-pair { grid-template-columns: minmax(0,1fr) minmax(0,1.3fr); }
+.performance-dialog select { display: block; width: 100%; margin-top: 8px; }
+.performance-dialog input:not([type=checkbox]) { width: 100%; min-width: 0; box-sizing: border-box; }
+.performance-dialog .field-pair label { min-width: 0; }
+.performance-dialog .field-pair [hidden], .performance-movements[hidden] { display: none; }
+.performance-piece { margin: 12px 0; }
+.performance-dialog .check-label { display: flex; align-items: center; gap: 10px; margin: 10px 0; line-height: 1.5; }
+.performance-dialog input[type=checkbox] { width: 17px; height: 17px; flex: none; accent-color: var(--amber); margin: 0; }
+.performance-movements { padding-left: 28px; }
+.performance-row { display: flex; justify-content: space-between; align-items: start; gap: 20px; padding: 16px 0; border-top: 1px solid var(--line); }
+.performance-row > div { display: grid; gap: 6px; min-width: 0; overflow-wrap: anywhere; }
+.performance-row strong { font-size: .9rem; font-weight: 600; }
+.performance-row span { font-size: .83rem; }
+.performance-row small { color: var(--mut); font-size: .75rem; line-height: 1.6; }
+.performance-row > button { flex: none; }
+.performance-archive { margin: 18px 0; font-size: .85rem; }
+.performance-actions { display: flex; gap: 24px; align-items: center; }
+#performanceRemoval { border-top: 1px solid var(--line); margin-top: 20px; padding-top: 8px; }
+@media(max-width:600px) {
+  .piece-actions { gap: 14px; }
+  .performance-dialog .field-pair { grid-template-columns: minmax(0,1fr); gap: 0; }
+  .performance-dialog input,.performance-dialog select { max-width: 100%; }
+  .deadline-overview { gap: 18px; }
+  .deadline-overview > .text-button { width: 100%; text-align: left; }
+}
+
+.lane-scope { display: block; }
+.lane-scope small { display: block; margin: 3px 0 0; line-height: 1.5; }

@@ -239,10 +239,10 @@ test("provisional months and shared deadlines are rendered from data", () => {
   const { run } = fixture();
   assert.equal(run('monthLabel("2027-10")'), "October 2027");
   run(
-    'academic.deadlines=[{id:"first",month:"2027-02"},{id:"final",month:"2027-05"}]',
+    'academic.deadlines=[{id:"first",month:"2027-02",pieceIds:["p"]},{id:"final",month:"2027-05",pieceIds:["p"]}]',
   );
   assert.equal(
-    run('pieceDeadlineLabel({deadlineIds:["first","final"]})'),
+    run('pieceDeadlineLabel({id:"p",deadlineIds:["obsolete"]})'),
     "February 2027 + May 2027",
   );
 });
@@ -419,4 +419,60 @@ test('timeline renders scoped expandable stages and retains expanded state on re
   assert.match(elements.pieces.innerHTML,/Movements I/);
   run('renderTimeline()');
   assert.match(elements.pieces.innerHTML,/data-stage-id="p:due:learn" open/);
+});
+
+test('performance payload carries selected movement scope and rejects an empty selection',()=>{
+  const {run,elements}=fixture();
+  for(const [id,value] of Object.entries({performanceTiming:'exact',performanceDate:'2026-10-15',performanceName:'Class',performancePriority:'medium'})) elements[id]={value};
+  run(`docs[FILES.state]={obj:{pieces:[{id:'p',title:'Sonata',movements:[{id:'i'},{id:'ii'}]}]}};
+    performanceEdit={id:'event',revision:2};
+    document.querySelectorAll=s=>s==='[data-performance-piece]:checked'?[{dataset:{performancePiece:'p'}}]:[{dataset:{performanceParent:'p',performanceMovement:'ii'}}];`);
+  const payload=JSON.parse(run('JSON.stringify(performancePayload())'));
+  assert.deepEqual(payload.movementIdsByPiece,{p:['ii']});
+  assert.equal(payload.date,'2026-10-15');
+  assert.equal(payload.priority,'medium');
+  run('document.querySelectorAll=()=>[]');
+  assert.throws(()=>run('performancePayload()'),/Choose at least one piece/);
+});
+
+test('failed performance saves preserve input and reuse identity without multiplying events',async()=>{
+  const {run,elements}=fixture();
+  for(const id of ['performanceResult','performanceInputs','closePerformance']) elements[id]={};
+  run(`performancePayload=()=>({id:'event',revision:0,label:'Class',date:'2026-10-15',priority:'medium'});
+    api=async(path,body)=>{captured=body;throw new Error('Connection lost. Retry.');};`);
+  await run('savePerformance()');
+  const first=run('captured.performance.requestId');
+  await run('savePerformance()');
+  assert.equal(first,run('captured.performance.requestId'));
+  assert.equal(run('captured.performance.label'),'Class');
+  assert.equal(elements.performanceInputs.disabled,false);
+  assert.match(elements.performanceResult.textContent,/Connection lost/);
+});
+
+test('removed dates stay out of repertoire filters and remain restorable',()=>{
+  const {run,elements}=fixture();
+  for(const id of ['performanceList','performanceListTitle','deadlineOverview','pieceFilters','pieces']) elements[id]={};
+  run(`docs[FILES.state]={obj:{pieces:[{id:'p',title:'Sonata'}]}};academic={startDate:'2026-09-22',deadlines:[
+    {id:'a',label:'Class',date:'2027-10-15',month:'2027-10',priority:'medium',pieceIds:['p']},
+    {id:'b',label:'Removed recital',month:'2027-12',archived:true,pieceIds:['p']} ]};
+    performancePiece='p';renderPerformanceList();renderTimeline();`);
+  assert.match(elements.performanceList.innerHTML,/data-performance-restore="b"/);
+  assert.match(elements.pieceFilters.innerHTML,/Oct 2027/);
+  assert.doesNotMatch(elements.pieceFilters.innerHTML,/2027-12/);
+  assert.doesNotMatch(elements.deadlineOverview.innerHTML,/Removed recital/);
+});
+
+test('a performance save refresh waits out an earlier poll then reads the new state',async()=>{
+  const {run,context,elements}=fixture();
+  elements.banner={textContent:''};
+  let finishPoll;
+  context.pendingPoll=new Promise(resolve=>{finishPoll=resolve;});
+  run(`var reads=0;loadAll=async()=>{if(++reads===1) await pendingPoll;};renderAll=()=>{};renderSync=()=>{};`);
+  const old=run('refreshQuiet()');
+  const fresh=run('refreshQuiet(true)');
+  assert.equal(run('reads'),1);
+  finishPoll();
+  await Promise.all([old,fresh]);
+  assert.equal(run('reads'),2);
+  assert.equal(run('refreshing'),false);
 });

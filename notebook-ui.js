@@ -152,13 +152,104 @@ function stageDate(s) {
   const opts = {day:"numeric",month:"short"};
   return `${dateLabel(s.startDate,opts)} – ${dateLabel(s.endDate,opts)}`;
 }
+function performancePriority(d) { return d.priority || "high"; }
+function priorityLabel(d) { const p = performancePriority(d); return p[0].toUpperCase()+p.slice(1)+" priority"; }
+function performanceDate(d) { return d.date ? dateLabel(d.date,{day:"numeric",month:"short",year:"numeric"}) : monthLabel(d.month)+" · date to confirm"; }
+function performancePast(d) { return d.date ? d.date < ukDate() : d.month < ukDate().slice(0,7); }
+function sortedPerformances(rows) { return [...rows].sort((a,b) => (a.date || a.month+"-01").localeCompare(b.date || b.month+"-01")); }
+let performancePiece = "", performanceEdit = null, performanceBusy = false, performanceRetry = null;
+function renderPerformanceList() {
+  const rows = sortedPerformances(deadlines(true).filter(d => !performancePiece || d.pieceIds?.includes(performancePiece)));
+  const row = d => `<div class="performance-row"><div><strong>${esc(deadlineName(d))}</strong><span>${esc(performanceDate(d))}</span><small>${esc(priorityLabel(d))}${!performancePiece ? ` · ${esc((d.pieceIds || []).map(id => practicePiece(id)?.short || practicePiece(id)?.title || id).join(", "))}` : ""}</small></div><button class="text-button" ${d.archived ? `data-performance-restore="${esc(d.id)}"` : `data-performance-edit="${esc(d.id)}"`}>${d.archived ? "Restore" : "Edit"}</button></div>`;
+  const upcoming = rows.filter(d => !d.archived && !performancePast(d));
+  const past = rows.filter(d => !d.archived && performancePast(d));
+  const removed = rows.filter(d => d.archived);
+  $("performanceListTitle").textContent = performancePiece ? `${practicePiece(performancePiece)?.short || practicePiece(performancePiece)?.title} · dates` : "Performances & deadlines";
+  $("performanceList").innerHTML = upcoming.map(row).join("") || '<p class="quiet-empty">No upcoming performances.</p>';
+  if (past.length) $("performanceList").innerHTML += `<details class="performance-archive"><summary>Past performances (${past.length})</summary>${past.map(row).join("")}</details>`;
+  if (removed.length) $("performanceList").innerHTML += `<details class="performance-archive"><summary>Removed (${removed.length})</summary>${removed.map(row).join("")}</details>`;
+}
+function openPerformances(pieceId = "") {
+  performancePiece = pieceId; renderPerformanceList();
+  $("performanceListResult").textContent = "";
+  $("performanceListDialog").showModal();
+}
+function updatePerformanceTiming() {
+  const exact = $("performanceTiming").value === "exact";
+  $("performanceDateField").hidden = !exact; $("performanceDate").required = exact;
+  $("performanceMonthField").hidden = exact; $("performanceMonth").required = !exact;
+}
+function openPerformanceEditor(id = "") {
+  if (performanceBusy) return;
+  const d = deadlines().find(d => d.id === id);
+  if (id && !d) return;
+  if (!$("performanceListDialog").open) performancePiece = "";
+  performanceEdit = {id: d?.id || crypto.randomUUID(), revision:d?.revision || 0, existing:!!d};
+  performanceRetry = null;
+  $("performanceListDialog").close();
+  $("performanceHeading").textContent = d ? "Edit performance" : "Add performance";
+  $("performanceName").value = d ? deadlineName(d) : "";
+  $("performanceDate").value = d?.date || "";
+  $("performanceMonth").value = d?.month || ukDate().slice(0,7);
+  $("performanceTiming").value = d && !d.date ? "window" : "exact";
+  $("performancePriority").value = d ? performancePriority(d) : "medium";
+  $("performancePieces").innerHTML = activePieces().map(p => {
+    const selected = d ? d.pieceIds?.includes(p.id) : p.id === performancePiece;
+    const scope = d?.movementIdsByPiece?.[p.id];
+    return `<div class="performance-piece"><label class="check-label"><input type="checkbox" data-performance-piece="${esc(p.id)}" ${selected ? "checked" : ""}>${esc(p.short || p.title)}</label>${p.movements?.length ? `<div class="performance-movements" ${selected ? "" : "hidden"}>${p.movements.map(m => `<label class="check-label"><input type="checkbox" data-performance-movement="${esc(m.id)}" data-performance-parent="${esc(p.id)}" ${!scope || scope.includes(m.id) ? "checked" : ""}>${esc(m.title)}</label>`).join("")}</div>` : ""}</div>`;
+  }).join("");
+  $("removePerformance").hidden = !d;
+  $("performanceRemoval").hidden = true;
+  $("performanceResult").textContent = "";
+  $("performanceInputs").disabled = false;
+  updatePerformanceTiming(); $("performanceDialog").showModal();
+}
+function performancePayload() {
+  const pieceIds = [...document.querySelectorAll("[data-performance-piece]:checked")].map(el => el.dataset.performancePiece);
+  if (!pieceIds.length) throw new Error("Choose at least one piece.");
+  const movementIdsByPiece = {};
+  for (const id of pieceIds) {
+    const movements = practicePiece(id)?.movements || [];
+    if (!movements.length) continue;
+    const selected = [...document.querySelectorAll("[data-performance-movement]:checked")].filter(el => el.dataset.performanceParent === id).map(el => el.dataset.performanceMovement);
+    if (!selected.length) throw new Error(`Choose a movement for ${practicePiece(id).short || practicePiece(id).title}.`);
+    if (selected.length !== movements.length) movementIdsByPiece[id] = selected;
+  }
+  const exact = $("performanceTiming").value === "exact";
+  return {id:performanceEdit.id,revision:performanceEdit.revision,action:"save",label:$("performanceName").value.trim(),
+    date:exact ? $("performanceDate").value : null,month:exact ? $("performanceDate").value.slice(0,7) : $("performanceMonth").value,
+    priority:$("performancePriority").value,pieceIds,movementIdsByPiece};
+}
+async function savePerformance(action = "save", restoreId = "") {
+  if (performanceBusy) return;
+  const status = restoreId ? $("performanceListResult") : $("performanceResult");
+  try {
+    const d = restoreId ? deadlines(true).find(d => d.id === restoreId) : performanceEdit;
+    const change = action === "save" ? performancePayload() : {id:d.id,revision:d.revision || 0,action};
+    const signature = JSON.stringify(change);
+    if (performanceRetry?.signature !== signature) performanceRetry = {signature,requestId:crypto.randomUUID()};
+    performanceBusy = true; $("performanceInputs").disabled = true; $("closePerformance").disabled = true;
+    status.textContent = "Saving…";
+    academic = await api("/api/preferences",{performance:{...change,requestId:performanceRetry.requestId}});
+    saveCache();
+    if (!restoreId) $("performanceDialog").close();
+    await refreshQuiet(true);
+    openPerformances(performancePiece);
+    $("performanceListResult").textContent = action === "archive" ? "Removed. You can restore it below." : "Saved. Future sessions updated.";
+    renderProgramme();
+  } catch(e) { status.textContent = e.message; }
+  finally { performanceBusy = false; $("performanceInputs").disabled = false; $("closePerformance").disabled = false; }
+}
 function renderTimeline() {
   document.querySelectorAll?.("#pieces details[data-section-key]").forEach(el => {
     if (el.open) expandedSections.add(el.dataset.sectionKey); else expandedSections.delete(el.dataset.sectionKey);
   });
   const months = timelineMonths();
-  const ds = deadlines();
-  $("deadlineOverview").innerHTML = ds.map(d => `<button class="deadline-link" data-open-dates><span>${esc(deadlineName(d))}</span><strong>${esc(d.date ? dateLabel(d.date) : monthLabel(deadlineMonth(d)))}</strong>${!d.date ? '<small>Date to confirm</small>' : ""}</button>`).join("");
+  const ds = sortedPerformances(deadlines());
+  const filters = [...new Set(ds.map(d => d.month))];
+  if (pieceFilter !== "all" && !filters.includes(pieceFilter)) pieceFilter = "all";
+  if ($("pieceFilters")) $("pieceFilters").innerHTML = [{id:"all",name:"All works"},...filters.map(m => ({id:m,name:dateLabel(m+"-01",{month:"short",year:"numeric"})}))].map(f => `<button class="chip ${pieceFilter === f.id ? "active" : ""}" data-filter="${esc(f.id)}">${esc(f.name)}</button>`).join("");
+  $("deadlineOverview").innerHTML = ds.filter(d => !performancePast(d)).slice(0,3).map(d => `<button class="deadline-link" data-performance-edit="${esc(d.id)}"><span>${esc(deadlineName(d))}</span><strong>${esc(performanceDate(d))}</strong><small>${esc(priorityLabel(d))}</small></button>`).join("") + '<button class="text-button" data-open-performances>All performances &amp; deadlines</button>';
   const routes = (notebook.routes || []).filter(r => pieceFilter === "all" || r.deadlineMonth === pieceFilter);
   const pieces = activePieces().filter(p => routes.some(r => r.pieceId === p.id) || pieceFilter === "all");
   const monthHead = `<div class="timeline-header"><span>Piece / preparation stage</span><div class="month-grid" style="--months:${months.length}">${months.map(m => `<span>${esc(dateLabel(m+"-01",{month:"short"}))}</span>`).join("")}</div></div>`;
@@ -166,14 +257,14 @@ function renderTimeline() {
     const ownRoutes = routes.filter(r => r.pieceId === p.id);
     const current = ownRoutes.flatMap(r => r.stages).find(s => s.startDate <= ukDate() && s.endDate >= ukDate());
     const dueText = [...new Set(ownRoutes.map(r => dateLabel(r.deadlineMonth+"-01",{month:"short"})))].join(" / ");
-    return `<article class="timeline-piece ${expandedPieces.has(p.id) ? "piece-expanded" : ""}" data-timeline-piece="${esc(p.id)}"><div class="timeline-piece-title"><h2>${esc(p.short || p.title)}</h2><button class="piece-expand" data-piece-plan="${esc(p.id)}" aria-expanded="${expandedPieces.has(p.id)}" aria-controls="piece-plan-${esc(p.id)}">${esc(p.short || p.title)}<span aria-hidden="true">${expandedPieces.has(p.id) ? "−" : "+"}</span></button><button class="text-button" data-note-piece="${esc(p.id)}">Notes</button></div><p class="phone-route-summary">${esc([current?.title, dueText ? `Due ${dueText}` : "Date to confirm"].filter(Boolean).join(" · "))}</p><div class="piece-plan-body" id="piece-plan-${esc(p.id)}">${ownRoutes.length ? ownRoutes.map(route => {
+    return `<article class="timeline-piece ${expandedPieces.has(p.id) ? "piece-expanded" : ""}" data-timeline-piece="${esc(p.id)}"><div class="timeline-piece-title"><h2>${esc(p.short || p.title)}</h2><button class="piece-expand" data-piece-plan="${esc(p.id)}" aria-expanded="${expandedPieces.has(p.id)}" aria-controls="piece-plan-${esc(p.id)}">${esc(p.short || p.title)}<span aria-hidden="true">${expandedPieces.has(p.id) ? "−" : "+"}</span></button><div class="piece-actions"><button class="text-button" data-piece-dates="${esc(p.id)}">Dates${ownRoutes.length ? ` (${ownRoutes.length})` : ""}</button><button class="text-button" data-note-piece="${esc(p.id)}">Notes</button></div></div><p class="phone-route-summary">${esc([current?.title, dueText ? `Due ${dueText}` : "Date to confirm"].filter(Boolean).join(" · "))}</p><div class="piece-plan-body" id="piece-plan-${esc(p.id)}">${ownRoutes.length ? ownRoutes.map(route => {
       const bars = route.stages.map(s => {
         const start = Math.max(0, months.indexOf(s.startDate.slice(0,7))), end = Math.max(start, months.indexOf(s.endDate.slice(0,7)));
         const active = s.startDate <= ukDate() && s.endDate >= ukDate();
         return `<button class="stage-bar ${s.kind === "due" ? "due" : ""} ${active ? "current" : ""}" style="grid-column:${start+1}/${end+2}" data-stage-toggle="${esc(s.id)}" aria-expanded="${expandedStages.has(s.id)}" aria-controls="stage-${esc(s.id)}" aria-label="${esc(`${p.short || p.title}: ${s.title}, ${stageDate(s)}`)}">${esc(s.edited ? s.title : s.label)}<span aria-hidden="true">${expandedStages.has(s.id) ? "−" : "+"}</span></button>`;
       }).join("");
-      return `<div class="timeline-lane"><span class="lane-scope">${esc(route.scope ? `Movements ${route.scope}` : "Whole work")}<small>${esc(route.deadlineDate ? dateLabel(route.deadlineDate,{day:"numeric",month:"short"}) : monthLabel(route.deadlineMonth))}</small></span><div class="month-grid stage-track" style="--months:${months.length}">${bars}</div></div><div class="stage-list">${route.stages.map(s => `<details id="stage-${esc(s.id)}" class="stage-detail" data-stage-id="${esc(s.id)}" ${expandedStages.has(s.id) ? "open" : ""}><summary><span>${esc(s.title)}</span><span>${esc(stageDate(s))}</span></summary>${stageDetails(route,s)}</details>`).join("")}</div>`;
-    }).join("") : `<p class="quiet-empty">Add a performance window in settings to plan the stages.</p>`}</div></article>`;
+      return `<div class="timeline-lane"><span class="lane-scope"><button class="text-button performance-lane-title" data-performance-edit="${esc(route.deadlineId)}">${esc(route.deadlineLabel || "Performance")}</button><small>${esc(priorityLabel(route))} · ${esc(route.scope ? `Movements ${route.scope}` : "Whole work")}</small><small>${esc(route.deadlineDate ? dateLabel(route.deadlineDate,{day:"numeric",month:"short"}) : monthLabel(route.deadlineMonth))}</small></span><div class="month-grid stage-track" style="--months:${months.length}">${bars}</div></div><div class="stage-list">${route.stages.map(s => `<details id="stage-${esc(s.id)}" class="stage-detail" data-stage-id="${esc(s.id)}" ${expandedStages.has(s.id) ? "open" : ""}><summary><span>${esc(s.title)}</span><span>${esc(stageDate(s))}</span></summary>${stageDetails(route,s)}</details>`).join("")}</div>`;
+    }).join("") : `<p class="quiet-empty">Add a performance date to plan the stages.</p>`}</div></article>`;
   }).join("");
   $("pieces").innerHTML = notebookProblem() + (pieces.length ? monthHead+rows : '<p class="quiet-empty">No repertoire in this window.</p>');
   document.querySelectorAll?.("#pieces .stage-content > details").forEach((el) => {
@@ -210,6 +301,22 @@ async function changeTaskState(id, status, control) {
   finally { control.disabled = false; }
 }
 function wireNotebook() {
+  $("addPerformance").addEventListener("click",() => openPerformanceEditor());
+  $("performanceTiming").addEventListener("change",updatePerformanceTiming);
+  $("performancePieces").addEventListener("change",e => {
+    if (!e.target.dataset.performancePiece) return;
+    const group=e.target.closest(".performance-piece").querySelector(".performance-movements");
+    if (group) group.hidden=!e.target.checked;
+  });
+  $("performanceForm").addEventListener("submit",e => {e.preventDefault();savePerformance();});
+  $("performanceDialog").addEventListener("cancel",e => {if(performanceBusy) e.preventDefault();});
+  $("removePerformance").addEventListener("click",() => {
+    const d=deadlines().find(d => d.id===performanceEdit.id);
+    $("performanceRemovalText").textContent=`Remove “${deadlineName(d)}” from ${d.pieceIds.length === 1 ? "this piece" : `all ${d.pieceIds.length} pieces`}? Its preparation stages will leave the plan. Practice history is kept.`;
+    $("performanceRemoval").hidden=false;
+  });
+  $("keepPerformance").addEventListener("click",() => {$("performanceRemoval").hidden=true;});
+  $("confirmRemovePerformance").addEventListener("click",() => savePerformance("archive"));
   $("notePiece").addEventListener("change", () => chooseNotePiece($("notePiece").value, "", false));
   $("noteMovement").addEventListener("change", () => {
     noteChoice.movementId = $("noteMovement").value;
@@ -250,7 +357,10 @@ function wireNotebook() {
       t.querySelector("span").textContent = open ? "−" : "+";
     }
     if (t.hasAttribute("data-notebook-retry")) refreshQuiet();
-    if (t.hasAttribute("data-open-dates")) openSettings();
+    if (t.hasAttribute("data-open-performances")) openPerformances();
+    if (t.dataset.pieceDates) openPerformances(t.dataset.pieceDates);
+    if (t.dataset.performanceEdit) openPerformanceEditor(t.dataset.performanceEdit);
+    if (t.dataset.performanceRestore) savePerformance("restore",t.dataset.performanceRestore);
   });
   $("taskForm").addEventListener("submit",async e => {
     e.preventDefault(); const btn=e.target.querySelector('[type="submit"]'); btn.disabled=true;

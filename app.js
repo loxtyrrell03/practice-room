@@ -309,8 +309,17 @@ async function start() {
   renderAll();
   if (coachQueue.pending || coachQueue.processing) startPolling();
 }
-async function refreshQuiet() {
-  if (refreshing) return;
+let refreshPromise = null;
+async function refreshQuiet(afterMutation = false) {
+  if (refreshPromise) {
+    await refreshPromise;
+    if (afterMutation) return refreshQuiet(true);
+    return;
+  }
+  refreshPromise = refreshSnapshot();
+  try { await refreshPromise; } finally { refreshPromise = null; }
+}
+async function refreshSnapshot() {
   refreshing = true;
   try {
     await loadAll();
@@ -707,12 +716,9 @@ function nextFocus() {
     focusRef = null;
   }
 }
-function deadlines() {
-  return Array.isArray(academic.deadlines)
-    ? academic.deadlines
-    : Array.isArray(academic.academicYear?.deadlines)
-      ? academic.academicYear.deadlines
-      : [];
+function deadlines(includeArchived = false) {
+  const rows = Array.isArray(academic.deadlines) ? academic.deadlines : academic.academicYear?.deadlines || [];
+  return rows.filter(d => includeArchived || !d.archived);
 }
 function deadlineName(d) {
   return d.title || d.label || d.name || d.id || "Performance";
@@ -726,14 +732,8 @@ function monthLabel(month) {
     : "Date window to confirm";
 }
 function pieceDeadlineLabel(piece) {
-  const matched = deadlines().filter((d) =>
-    (piece.deadlineIds || []).includes(d.id),
-  );
-  if (matched.length)
-    return matched.map((d) => monthLabel(deadlineMonth(d))).join(" + ");
-  return piece.id === "beethoven-op109"
-    ? "FEBRUARY + MAY"
-    : monthLabel(piece.planning?.deadlineMonth || "");
+  const matched = deadlines().filter(d => d.pieceIds?.includes(piece.id));
+  return [...new Set(matched.map(d => monthLabel(deadlineMonth(d))))].join(" + ") || "No performance date";
 }
 function renderProgramme() {
   renderTimeline();
@@ -837,14 +837,7 @@ function openSettings() {
   $("targetMin").value = target.min / 60;
   $("targetMax").value = target.max / 60;
   $("settingsSync").textContent = syncText();
-  $("deadlineFields").innerHTML =
-    deadlines()
-      .map(
-        (d) =>
-          `<label class="field">${esc(deadlineName(d))}<input type="date" data-deadline="${esc(d.id)}" value="${esc(d.date || "")}"></label>`,
-      )
-      .join("") ||
-    '<p class="muted">Deadline settings will appear when your academic year is ready.</p>';
+  $("deadlineFields").innerHTML = '<button class="text-button" type="button" data-open-performances>Manage performances</button>';
   $("settingsResult").textContent = "";
   $("settingsDialog").showModal();
 }
@@ -861,9 +854,6 @@ async function saveSettings(e) {
   try {
     await api("/api/preferences", {
       dailyTargetMinutes: { min, max },
-      deadlines: [...document.querySelectorAll("[data-deadline]")].map(
-        (el) => ({ id: el.dataset.deadline, date: el.value || null }),
-      ),
     });
     await refreshQuiet();
     $("settingsResult").textContent =

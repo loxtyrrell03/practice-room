@@ -21,7 +21,7 @@
       href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="app.css?v=39" />
+    <link rel="stylesheet" href="app.css?v=40" />
   </head>
   <body>
     <a class="skip-link" href="#main">Skip to content</a>
@@ -144,11 +144,7 @@
           </button>
         </div>
         <div id="deadlineOverview" class="deadline-overview"></div>
-        <div class="filter-row" id="pieceFilters">
-          <button class="chip active" data-filter="all">All works</button
-          ><button class="chip" data-filter="2027-02">February</button
-          ><button class="chip" data-filter="2027-05">May</button>
-        </div>
+        <div class="filter-row" id="pieceFilters"></div>
         <div id="pieces" class="pieces"></div>
       </section>
       <!-- COACH -->
@@ -275,6 +271,30 @@
         <div id="entries"></div>
       </section>
     </main>
+    <dialog id="performanceListDialog" class="settings-dialog performance-dialog">
+      <div class="dialog-heading"><h2 id="performanceListTitle">Performances</h2><button class="icon-button" data-close="performanceListDialog" aria-label="Close performances">×</button></div>
+      <div id="performanceList"></div>
+      <p id="performanceListResult" class="inline-status" role="status"></p>
+      <button id="addPerformance" class="button primary" type="button">Add performance</button>
+    </dialog>
+    <dialog id="performanceDialog" class="settings-dialog performance-dialog">
+      <div class="dialog-heading"><h2 id="performanceHeading">Add performance</h2><button id="closePerformance" class="icon-button" data-close="performanceDialog" aria-label="Close performance editor">×</button></div>
+      <form id="performanceForm">
+        <fieldset id="performanceInputs">
+          <label class="field">Name<input id="performanceName" maxlength="120" placeholder="e.g. Performance class" required></label>
+          <label class="field">Timing<select id="performanceTiming"><option value="exact">Exact date</option><option value="window">Month to aim for</option></select></label>
+          <div class="field-pair">
+            <label id="performanceDateField">Date<input id="performanceDate" type="date"></label>
+            <label id="performanceMonthField" hidden>Month<input id="performanceMonth" type="month"></label>
+            <label>Importance <button class="help-button" type="button" aria-label="About performance importance" data-help="Higher importance protects more preparation time. Dates approaching soon also gain attention, while the planner keeps your other repertoire in rotation.">?</button><select id="performancePriority" aria-label="Importance"><option value="high">High · major recital / exam</option><option value="medium" selected>Medium · performance class</option><option value="low">Low · informal run-through</option></select></label>
+          </div>
+          <fieldset class="performance-repertoire"><legend>Repertoire</legend><div id="performancePieces"></div></fieldset>
+          <div class="performance-actions"><button id="savePerformance" class="button primary" type="submit">Save performance</button><button id="removePerformance" class="text-button" type="button">Remove</button></div>
+          <div id="performanceRemoval" hidden><p id="performanceRemovalText"></p><button id="confirmRemovePerformance" class="button secondary" type="button">Remove performance</button> <button id="keepPerformance" class="text-button" type="button">Keep it</button></div>
+        </fieldset>
+        <p id="performanceResult" class="inline-status" role="status"></p>
+      </form>
+    </dialog>
     <dialog id="taskDialog" class="settings-dialog">
       <div class="dialog-heading"><h2>Edit practice task</h2><button class="icon-button" data-close="taskDialog" aria-label="Close task editor">×</button></div>
       <form id="taskForm"><input id="taskId" type="hidden"><input id="taskRevision" type="hidden">
@@ -351,11 +371,7 @@
           </div>
         </fieldset>
         <fieldset>
-          <legend>Confirmed performance dates</legend>
-          <p class="muted small">
-            Leave a date blank until it is confirmed. February and May remain
-            planning windows.
-          </p>
+          <legend>Performances &amp; deadlines</legend>
           <div id="deadlineFields"></div>
         </fieldset>
         <div id="settingsResult" class="inline-status" role="status"></div>
@@ -414,7 +430,7 @@
       </button>
       <p id="helpText"></p>
     </div>
-    <script src="app.js?v=39"></script>
-    <script src="notebook-ui.js?v=39"></script>
+    <script src="app.js?v=40"></script>
+    <script src="notebook-ui.js?v=40"></script>
   </body>
 </html>
