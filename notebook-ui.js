@@ -152,7 +152,7 @@ function stageDate(s) {
   const opts = {day:"numeric",month:"short"};
   return `${dateLabel(s.startDate,opts)} – ${dateLabel(s.endDate,opts)}`;
 }
-function performancePriority(d) { return d.priority || "high"; }
+function performancePriority(d) { return d.priority || "medium"; }
 function priorityLabel(d) { const p = performancePriority(d); return p[0].toUpperCase()+p.slice(1)+" priority"; }
 function performanceDate(d) { return d.date ? dateLabel(d.date,{day:"numeric",month:"short",year:"numeric"}) : monthLabel(d.month)+" · date to confirm"; }
 function performancePast(d) { return d.date ? d.date < ukDate() : d.month < ukDate().slice(0,7); }
@@ -263,7 +263,7 @@ function renderTimeline() {
         const active = s.startDate <= ukDate() && s.endDate >= ukDate();
         return `<button class="stage-bar ${s.kind === "due" ? "due" : ""} ${active ? "current" : ""}" style="grid-column:${start+1}/${end+2}" data-stage-toggle="${esc(s.id)}" aria-expanded="${expandedStages.has(s.id)}" aria-controls="stage-${esc(s.id)}" aria-label="${esc(`${p.short || p.title}: ${s.title}, ${stageDate(s)}`)}">${esc(s.edited ? s.title : s.label)}<span aria-hidden="true">${expandedStages.has(s.id) ? "−" : "+"}</span></button>`;
       }).join("");
-      return `<div class="timeline-lane"><span class="lane-scope"><button class="text-button performance-lane-title" data-performance-edit="${esc(route.deadlineId)}">${esc(route.deadlineLabel || "Performance")}</button><small>${esc(priorityLabel(route))} · ${esc(route.scope ? `Movements ${route.scope}` : "Whole work")}</small><small>${esc(route.deadlineDate ? dateLabel(route.deadlineDate,{day:"numeric",month:"short"}) : monthLabel(route.deadlineMonth))}</small></span><div class="month-grid stage-track" style="--months:${months.length}">${bars}</div></div><div class="stage-list">${route.stages.map(s => `<details id="stage-${esc(s.id)}" class="stage-detail" data-stage-id="${esc(s.id)}" ${expandedStages.has(s.id) ? "open" : ""}><summary><span>${esc(s.title)}</span><span>${esc(stageDate(s))}</span></summary>${stageDetails(route,s)}</details>`).join("")}</div>`;
+      return `<div class="timeline-lane"><span class="lane-scope"><button class="text-button performance-lane-title" data-performance-edit="${esc(route.deadlineId)}">${esc(route.deadlineLabel || "Performance")}</button><small>${esc(route.scope ? `Movements ${route.scope}` : "Whole work")}</small><small>${esc(route.deadlineDate ? dateLabel(route.deadlineDate,{day:"numeric",month:"short"}) : monthLabel(route.deadlineMonth))}</small></span><div class="month-grid stage-track" style="--months:${months.length}">${bars}</div></div><div class="stage-list">${route.stages.map(s => `<details id="stage-${esc(s.id)}" class="stage-detail" data-stage-id="${esc(s.id)}" ${expandedStages.has(s.id) ? "open" : ""}><summary><span>${esc(s.title)}</span><span>${esc(stageDate(s))}</span></summary>${stageDetails(route,s)}</details>`).join("")}</div>`;
     }).join("") : `<p class="quiet-empty">Add a performance date to plan the stages.</p>`}</div></article>`;
   }).join("");
   $("pieces").innerHTML = notebookProblem() + (pieces.length ? monthHead+rows : '<p class="quiet-empty">No repertoire in this window.</p>');

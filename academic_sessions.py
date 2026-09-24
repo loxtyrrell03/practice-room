@@ -74,7 +74,7 @@ def _candidates(state, now, academic=None):
                 month = mp.get("deadlineMonth") or plan.get("deadlineMonth")
                 if month:
                     target = instant(month+'-01T00:00:00')
-                    windows = [(target, (target.replace(day=28)+timedelta(days=4)).replace(day=1), "high")]
+                    windows = [(target, (target.replace(day=28)+timedelta(days=4)).replace(day=1), "medium")]
             future = [(target, importance) for target, expiry, importance in windows if expiry > now]
             if future:
                 weight *= max(pressure((target.date()-now.date()).days, importance)

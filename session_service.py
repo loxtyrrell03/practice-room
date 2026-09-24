@@ -57,7 +57,7 @@ def validate_academic_year(academic, state=None):
         seen.add(deadline["id"])
         if not isinstance(deadline.get("label"), str) or not deadline["label"].strip() or len(deadline["label"]) > 120:
             raise ValueError("A performance needs a name, up to 120 characters.")
-        if deadline.get("priority", "high") not in {"low", "medium", "high"}:
+        if deadline.get("priority", "medium") not in {"low", "medium", "high"}:
             raise ValueError("Choose low, medium or high importance.")
         if type(deadline.get("revision", 0)) is not int or deadline.get("revision", 0) < 0:
             raise ValueError("Invalid performance revision.")

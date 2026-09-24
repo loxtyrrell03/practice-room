@@ -18,6 +18,9 @@ def weights(events, now=NOW, state=STATE):
 class PerformanceAllocationTests(unittest.TestCase):
     def test_importance_and_proximity_both_matter(self):
         low, medium, high = [weights([event(priority=p)])[0] for p in ("low", "medium", "high")]
+        unspecified = event()
+        unspecified.pop("priority")
+        self.assertEqual(medium, weights([unspecified])[0])
         self.assertLess(low, medium)
         self.assertLess(medium, high)
         self.assertLessEqual(high, 5)

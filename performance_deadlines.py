@@ -7,9 +7,8 @@ import json
 
 
 def priority(deadline):
-    # The original year windows were major assessments. New events explicitly
-    # default to medium in the editor; retain the importance of old anchors.
-    return deadline.get("priority", "high")
+    # Missing importance is ordinary priority, not evidence of a major event.
+    return deadline.get("priority", "medium")
 
 
 def applies(deadline, piece, movement):

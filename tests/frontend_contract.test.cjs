@@ -237,6 +237,8 @@ test("chat acceptance preserves a newer composer draft", async () => {
 
 test("provisional months and shared deadlines are rendered from data", () => {
   const { run } = fixture();
+  assert.equal(run('performancePriority({})'), "medium");
+  assert.equal(run('performancePriority({priority:"high"})'), "high");
   assert.equal(run('monthLabel("2027-10")'), "October 2027");
   run(
     'academic.deadlines=[{id:"first",month:"2027-02",pieceIds:["p"]},{id:"final",month:"2027-05",pieceIds:["p"]}]',
